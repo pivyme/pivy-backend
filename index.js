@@ -2,6 +2,7 @@ import "./dotenv.js";
 
 import Fastify from "fastify";
 import FastifyCors from "@fastify/cors";
+import { stealthWorkers } from "./src/workers/stealthWorkers.js";
 
 console.log(
   "======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n"
@@ -24,6 +25,9 @@ fastify.get("/", async (request, reply) => {
     data: null,
   });
 });
+
+/* --------------------------------- Workers -------------------------------- */
+fastify.register(stealthWorkers)
 
 const start = async () => {
   try {

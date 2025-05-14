@@ -17,6 +17,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@coral-xyz/anchor": "^0.29.0",
+    "@noble/curves": "^1.9.1",
+    "@noble/ed25519": "^1.6.0",
+    "@noble/hashes": "^1.4.0",
     "@fastify/cors": "^10.0.2",
     "@prisma/client": "^6.2.1",
     "@solana/wallet-standard-util": "^1.1.2",

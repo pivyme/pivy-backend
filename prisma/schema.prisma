@@ -13,11 +13,56 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Chain {
+  MAINNET
+  DEVNET
+}
+
 model User {
-  id            String   @id @default(cuid())
-  walletAddress String   @unique
-  nonce        String?   // For signature verification
-  lastSignIn   DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id String @id @default(cuid())
+
+  walletAddress String @unique
+  username      String @unique
+
+  metaSpendPriv String
+  metaViewPriv  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Events indexing
+model Payment {
+  txHash String @id
+  chain  Chain
+
+  slot      Int
+  timestamp Int
+
+  stealthOwnerPubkey String
+  ephemeralPubkey    String
+  payerPubKey        String
+
+  mintAddress String
+  amount      BigInt
+
+  label String?
+
+  createdAt DateTime @default(now())
+}
+
+model Withdrawal {
+  txHash String @id
+  chain  Chain
+
+  slot      Int
+  timestamp Int
+
+  stealthOwnerPubkey String
+  destinationPubkey  String
+
+  mintAddress String
+  amount      String
+
+  createdAt DateTime @default(now())
 }
