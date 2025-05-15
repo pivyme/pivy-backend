@@ -49,18 +49,20 @@ model Link {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  emoji String @default("🔗")
+  emoji           String @default("🔗")
   backgroundColor String @default("gray")
 
-  tag   String // "" = root personal link
-  label String // human label (max-32 for on-chain `label`)
+  tag         String // "" = root personal link
+  label       String // human label (max-32 for on-chain `label`)
   description String?
 
-  type LinkType 
-  amountType LinkAmountType 
+  type       LinkType
+  amountType LinkAmountType
 
-  file File?
+  file       File?
   amountData Json?
+
+  payments Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -74,13 +76,18 @@ model File {
   linkId String @unique
   link   Link   @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
-  filename  String
-  mimetype  String
-  size      Int
-  data      Bytes
-  
+  filename String
+  mimetype String
+  size     Int
+  data     Bytes
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum ActivityType {
+  PAYMENT
+  WITHDRAWAL
 }
 
 // Events indexing
@@ -95,10 +102,18 @@ model Payment {
   ephemeralPubkey    String
   payerPubKey        String
 
-  mintAddress String
-  amount      BigInt
+  mintId String
+  mint   MintDataCache @relation(fields: [mintId], references: [id])
 
-  label String?
+  amount BigInt
+
+  label    String?
+  announce Boolean @default(false)
+
+  linkId String?
+  link   Link?   @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  isProcessed Boolean @default(false)
 
   createdAt DateTime @default(now())
 }
@@ -113,8 +128,12 @@ model Withdrawal {
   stealthOwnerPubkey String
   destinationPubkey  String
 
-  mintAddress String
   amount      String
+
+  isProcessed Boolean @default(false)
+
+  mint   MintDataCache @relation(fields: [mintId], references: [id])
+  mintId String
 
   createdAt DateTime @default(now())
 }
@@ -124,6 +143,9 @@ model MintDataCache {
 
   mintAddress String
   chain       Chain
+
+  payments Payment[]
+  withdrawals Withdrawal[]
 
   name        String
   symbol      String

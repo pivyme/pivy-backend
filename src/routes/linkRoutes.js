@@ -148,6 +148,8 @@ export const linkRoutes = (app, _, done) => {
         description: true,
         amountType: true,
         amountData: true,
+        emoji: true,
+        backgroundColor: true,
         user: {
           select: {
             username: true,

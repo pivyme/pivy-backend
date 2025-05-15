@@ -3,6 +3,59 @@ import * as anchor from "@coral-xyz/anchor";
 import { CHAINS } from "../config.js";
 import { PIVY_STEALTH_IDL } from "../lib/pivy-stealth/IDL.js";
 import { prismaQuery } from "../lib/prisma.js";
+import { processPaymentTx } from "./helpers/activityHelpers.js";
+import { getOrCreateTokenCache } from "../utils/solanaUtils.js";
+import cron from "node-cron";
+
+const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
+
+/**
+ * Get or create native SOL token cache
+ */
+const getOrCreateNativeSOLCache = async (chain) => {
+  const existingCache = await prismaQuery.mintDataCache.findUnique({
+    where: {
+      mintAddress_chain: {
+        mintAddress: NATIVE_SOL_MINT,
+        chain: chain
+      }
+    }
+  });
+
+  if (existingCache && !existingCache.isInvalid) {
+    return existingCache;
+  }
+
+  // Create native SOL cache
+  return await prismaQuery.mintDataCache.upsert({
+    where: {
+      mintAddress_chain: {
+        mintAddress: NATIVE_SOL_MINT,
+        chain: chain
+      }
+    },
+    update: {
+      name: "Solana",
+      symbol: "SOL",
+      decimals: 9,
+      imageUrl: "https://assets.coingecko.com/coins/images/54252/standard/solana.jpg?1738911214",
+      description: "Native Solana token",
+      uriData: {},
+      isInvalid: false
+    },
+    create: {
+      mintAddress: NATIVE_SOL_MINT,
+      chain: chain,
+      name: "Solana",
+      symbol: "SOL",
+      decimals: 9,
+      imageUrl: "https://assets.coingecko.com/coins/images/54252/standard/solana.jpg?1738911214",
+      description: "Native Solana token",
+      uriData: {},
+      isInvalid: false
+    }
+  });
+};
 
 /**
  *
@@ -36,7 +89,7 @@ export const stealthWorkers = (app, _, done) => {
     const sigs = await connection.getSignaturesForAddress(
       stealthProgramId,
       {
-        limit: 20,
+        limit: 10,
         until: lastProcessedSignature
       }
     )
@@ -66,6 +119,8 @@ export const stealthWorkers = (app, _, done) => {
 
       if (existingPayment || existingWithdrawal) continue;
 
+      console.log('Processing signature: ', signature.signature)
+
       const transaction = await connection.getTransaction(signature.signature, { commitment: "confirmed" });
       if (!transaction?.meta?.logMessages) continue;
 
@@ -83,7 +138,8 @@ export const stealthWorkers = (app, _, done) => {
               amount: Number(eventData.amount).toString(),
               label: Buffer.from(eventData.label).toString("utf8").replace(/\0/g, ""),
               ephemeralPubkey: eventData.ephPubkey.toBase58(),
-              timestamp: signature.blockTime
+              timestamp: signature.blockTime,
+              announce: eventData.announce
             },
           });
         }
@@ -106,14 +162,31 @@ export const stealthWorkers = (app, _, done) => {
     }
 
     console.log('Stealth Program event results: ', results)
-    if( results.length === 0 ){
+    if (results.length === 0) {
       console.log('No new stealth transactions found');
       return;
     }
 
     for (const result of results) {
+      console.log('result: ', result)
+
+      // Handle token caching
+      let tokenCache;
+      if (result.data.mint === NATIVE_SOL_MINT) {
+        tokenCache = await getOrCreateNativeSOLCache(chain.id);
+      } else {
+        tokenCache = await getOrCreateTokenCache(
+          result.data.mint,
+          chain.id,
+          connection,
+          prismaQuery
+        );
+      }
+
+      const users = await prismaQuery.user.findMany({})
+
       if (result.type === 'IN') {
-        await prismaQuery.payment.create({
+        const newPayment = await prismaQuery.payment.create({
           data: {
             txHash: result.signature,
             slot: result.slot,
@@ -121,13 +194,23 @@ export const stealthWorkers = (app, _, done) => {
             stealthOwnerPubkey: result.data.stealthOwner,
             ephemeralPubkey: result.data.ephemeralPubkey,
             payerPubKey: result.data.payer,
-            mintAddress: result.data.mint,
             amount: result.data.amount,
             label: result.data.label,
-            chain: chain.id, 
+            announce: result.data.announce,
+            chain: chain.id,
+            mint: {
+              connect: {
+                id: tokenCache.id
+              }
+            }
           }
         })
-      }else if(result.type === 'OUT'){
+
+        await processPaymentTx({
+          txHash: newPayment.txHash,
+          users: users
+        })
+      } else if (result.type === 'OUT') {
         await prismaQuery.withdrawal.create({
           data: {
             txHash: result.signature,
@@ -135,9 +218,13 @@ export const stealthWorkers = (app, _, done) => {
             timestamp: result.data.timestamp,
             stealthOwnerPubkey: result.data.stealthOwner,
             destinationPubkey: result.data.destination,
-            mintAddress: result.data.mint,
             amount: result.data.amount,
             chain: chain.id,
+            mint: {
+              connect: {
+                id: tokenCache.id
+              }
+            }
           }
         })
       }
@@ -145,8 +232,12 @@ export const stealthWorkers = (app, _, done) => {
 
     console.log('Stealth Program event results: ', results)
   }
+  // handleFetchStealthTransactions()
 
-  handleFetchStealthTransactions()
+  // Every 5 seconds
+  cron.schedule('*/30 * * * * *', () => {
+    handleFetchStealthTransactions()
+  })
 
   done();
 }

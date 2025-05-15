@@ -60,7 +60,7 @@ fastify.register(linkRoutes, {
 })
 
 /* --------------------------------- Workers -------------------------------- */
-// fastify.register(stealthWorkers)
+fastify.register(stealthWorkers)
 
 const start = async () => {
   try {

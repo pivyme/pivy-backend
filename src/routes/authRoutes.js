@@ -15,7 +15,6 @@ export const authRoutes = (app, _, done) => {
   app.post('/login', async (req, res) => {
     try {
       const { signature, publicKey, payload, header } = req.body;
-      console.log('body', req.body);
 
       if (!signature || !publicKey || !payload || !header) {
         return res.status(400).send({
@@ -31,7 +30,6 @@ export const authRoutes = (app, _, done) => {
         t: header.t,
         s: base58Signature
       }
-      console.log('signature', _signature);
 
       const SiwsObject = new SIWS({ header, payload });
       const verificationResult = await SiwsObject.verify({ payload, signature: _signature });

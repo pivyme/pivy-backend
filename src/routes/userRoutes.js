@@ -225,5 +225,78 @@ export const userRoutes = (app, _, done) => {
     }
   })
 
+  app.get('/activities', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    try {
+      // Get all payments for the user's links
+      const payments = await prismaQuery.payment.findMany({
+        where: {
+          link: {
+            userId: request.user.id
+          }
+        },
+        include: {
+          // Include token data
+          mint: {
+            select: {
+              name: true,
+              symbol: true,
+              decimals: true,
+              imageUrl: true
+            }
+          },
+          // Include link data
+          link: {
+            select: {
+              label: true,
+              emoji: true,
+              backgroundColor: true,
+              tag: true,
+              type: true,
+              amountType: true
+            }
+          }
+        },
+        orderBy: {
+          timestamp: 'desc'
+        }
+      });
+
+      // Transform the data for frontend consumption
+      const activities = payments.map(payment => ({
+        id: payment.txHash,
+        type: 'PAYMENT',
+        timestamp: payment.timestamp,
+        amount: payment.amount.toString(),
+        token: {
+          symbol: payment.mint.symbol,
+          name: payment.mint.name,
+          decimals: payment.mint.decimals,
+          imageUrl: payment.mint.imageUrl
+        },
+        link: payment.link ? {
+          label: payment.link.label,
+          emoji: payment.link.emoji,
+          backgroundColor: payment.link.backgroundColor,
+          tag: payment.link.tag,
+          type: payment.link.type,
+          amountType: payment.link.amountType
+        } : null,
+        from: payment.payerPubKey,
+        isAnnounce: payment.announce,
+        chain: payment.chain
+      }));
+
+      return reply.send(activities);
+    } catch (error) {
+      console.error('Error fetching activities:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Failed to fetch activities'
+      });
+    }
+  })
+
   done();
 }

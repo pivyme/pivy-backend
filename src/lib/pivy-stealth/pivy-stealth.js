@@ -1,6 +1,9 @@
 import * as ed from '@noble/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
-import { Keypair } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
+import { ed25519 } from '@noble/curves/ed25519';
+import bs58 from 'bs58';
+// import { ed25519 } from '@noble/ed25519';
 
 const L = BigInt(
   '0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed'
@@ -9,14 +12,33 @@ const mod = (x, n) => ((x % n) + n) % n;
 const bytesToNumberLE = (u8) =>
   u8.reduceRight((p, c) => (p << 8n) + BigInt(c), 0n);
 
+/* helper: accept Buffer | Uint8Array | hex | base58 ------------------ */
+function to32u8(raw) {
+  if (!raw) throw new Error('empty key');
+
+  if (raw instanceof Uint8Array) return raw;
+
+  if (typeof raw === 'string') {
+    if (/^[0-9a-fA-F]{64}$/.test(raw))     // 32-byte hex
+      return Buffer.from(raw, 'hex');
+    return bs58.decode(raw);               // assume base58
+  }
+
+  // Prisma Bytes → { type:'Buffer', data:[...] }
+  if (raw.type === 'Buffer' && Array.isArray(raw.data))
+    return Uint8Array.from(raw.data);
+
+  throw new Error('unsupported key format');
+}
+
 /** RFC-5564-style stealth key derivation (identical to test script) */
 export async function deriveStealthKeypair(
   metaSpend,          // 32-B private scalar of spend key
   metaViewPub,        // 32-B public key of view key
   ephPriv             // 32-B ephemeral private scalar
 ) {
-  const shared  = await ed.getSharedSecret(ephPriv, metaViewPub);
-  const tweak   = mod(BigInt('0x' + Buffer.from(sha256(shared)).toString('hex')), L);
+  const shared = await ed.getSharedSecret(ephPriv, metaViewPub);
+  const tweak = mod(BigInt('0x' + Buffer.from(sha256(shared)).toString('hex')), L);
   const aScalar = BigInt('0x' + Buffer.from(metaSpend).toString('hex'));
   const sScalar = mod(aScalar + tweak, L);
 
@@ -30,4 +52,33 @@ export async function deriveStealthKeypair(
 
 export const convertBytesToString = (bytes) => {
   return Buffer.from(bytes).toString('hex');
+}
+
+export async function deriveStealthPubFromPriv(metaSpend, metaView, ephPub58) {
+  const mSpend = to32u8(metaSpend);                    // 32-byte secret a
+  const mView = to32u8(metaView);                     // 32-byte secret b
+  const ephPub = new PublicKey(ephPub58).toBytes();    // 32-byte point E
+
+  // 1) shared = b × E   (X25519 on ed25519 curve)
+  const shared = await ed.getSharedSecret(mView, ephPub);
+
+  // 2) tweak = H(shared) mod ℓ
+  const tweak = mod(
+    BigInt('0x' + Buffer.from(sha256(shared)).toString('hex')), L);
+
+  // 3) S = A + tweak · G
+  const Abytes = await ed.getPublicKey(mSpend);        // A = a·G
+
+  let Sbytes;
+  if (ed.utils.pointAddScalar) {
+    // noble ≥ 1.8 path
+    Sbytes = ed.utils.pointAddScalar(Abytes, tweak);
+  } else {
+    // universal fallback via @noble/curves
+    const A = ed25519.ExtendedPoint.fromHex(Abytes);
+    const S = A.add(ed25519.ExtendedPoint.BASE.multiply(tweak));
+    Sbytes = S.toRawBytes();
+  }
+
+  return new PublicKey(Sbytes).toBase58();             // stealth owner pubkey
 }
