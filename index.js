@@ -2,7 +2,12 @@ import "./dotenv.js";
 
 import Fastify from "fastify";
 import FastifyCors from "@fastify/cors";
+import FastifyMultipart from "@fastify/multipart";
 import { stealthWorkers } from "./src/workers/stealthWorkers.js";
+import { authRoutes } from './src/routes/authRoutes.js';
+import { userRoutes } from "./src/routes/userRoutes.js";
+import { addressRoutes } from "./src/routes/addressRoutes.js";
+import { linkRoutes } from "./src/routes/linkRoutes.js";
 
 console.log(
   "======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n"
@@ -10,6 +15,17 @@ console.log(
 
 const fastify = Fastify({
   logger: false,
+});
+
+fastify.register(FastifyMultipart, {
+  limits: {
+    fieldNameSize: 100, // Max field name size in bytes
+    fieldSize: 100000, // Max field value size in bytes
+    fields: 10,        // Max number of non-file fields
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    files: 1,         // Max number of file fields
+  },
+  attachFieldsToBody: true, // Attach fields to request.body
 });
 
 fastify.register(FastifyCors, {
@@ -26,8 +42,25 @@ fastify.get("/", async (request, reply) => {
   });
 });
 
+/* --------------------------------- Routes --------------------------------- */
+fastify.register(authRoutes, {
+  prefix: '/auth'
+})
+
+fastify.register(userRoutes, {
+  prefix: '/user'
+})
+
+fastify.register(addressRoutes, {
+  prefix: '/address'
+})
+
+fastify.register(linkRoutes, {
+  prefix: '/link'
+})
+
 /* --------------------------------- Workers -------------------------------- */
-fastify.register(stealthWorkers)
+// fastify.register(stealthWorkers)
 
 const start = async () => {
   try {

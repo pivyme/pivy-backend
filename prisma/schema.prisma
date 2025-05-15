@@ -21,12 +21,64 @@ enum Chain {
 model User {
   id String @id @default(cuid())
 
-  walletAddress String @unique
-  username      String @unique
+  walletAddress String  @unique
+  username      String? @unique
 
   metaSpendPriv String
   metaViewPriv  String
 
+  links Link[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum LinkType {
+  SIMPLE
+  DOWNLOAD
+}
+
+enum LinkAmountType {
+  OPEN
+  FIXED
+}
+
+model Link {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  emoji String @default("🔗")
+  backgroundColor String @default("gray")
+
+  tag   String // "" = root personal link
+  label String // human label (max-32 for on-chain `label`)
+  description String?
+
+  type LinkType 
+  amountType LinkAmountType 
+
+  file File?
+  amountData Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tag])
+}
+
+model File {
+  id String @id @default(cuid())
+
+  linkId String @unique
+  link   Link   @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  filename  String
+  mimetype  String
+  size      Int
+  data      Bytes
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -65,4 +117,25 @@ model Withdrawal {
   amount      String
 
   createdAt DateTime @default(now())
+}
+
+model MintDataCache {
+  id String @id @default(cuid())
+
+  mintAddress String
+  chain       Chain
+
+  name        String
+  symbol      String
+  decimals    Int
+  imageUrl    String?
+  description String?
+  uriData     Json?
+
+  isInvalid Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([mintAddress, chain])
 }
