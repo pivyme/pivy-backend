@@ -3,22 +3,26 @@ import { CHAINS } from "../config.js";
 import { prismaQuery } from "../lib/prisma.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { TOKEN_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/utils/token.js";
-import { getTokenInfo } from "../utils/solanaUtils.js";
+import { getTokenInfo, getWalletsTokensHolding } from "../utils/solanaUtils.js";
 
 // Simple in-memory cache implementation
 const balanceCache = new Map();
 const CACHE_DURATION = 15 * 1000; // 15 seconds in milliseconds
 
+// Balance cache for user balances
+const userBalanceCache = new Map();
+const USER_BALANCE_CACHE_DURATION = 30 * 1000; // 30 seconds in milliseconds
+
 const getCachedBalance = (address) => {
   const cached = balanceCache.get(address);
   if (!cached) return null;
-  
+
   // Check if cache has expired
   if (Date.now() - cached.timestamp > CACHE_DURATION) {
     balanceCache.delete(address);
     return null;
   }
-  
+
   return cached.data;
 };
 
@@ -28,6 +32,143 @@ const setCachedBalance = (address, data) => {
     timestamp: Date.now()
   });
 };
+
+const getCachedUserBalance = (userId, chain) => {
+  const key = `${userId}-${chain}`;
+  const cached = userBalanceCache.get(key);
+  if (!cached) return null;
+  
+  // Check if cache has expired
+  if (Date.now() - cached.timestamp > USER_BALANCE_CACHE_DURATION) {
+    userBalanceCache.delete(key);
+    return null;
+  }
+  
+  return cached.data;
+};
+
+const setCachedUserBalance = (userId, chain, data) => {
+  const key = `${userId}-${chain}`;
+  userBalanceCache.set(key, {
+    data,
+    timestamp: Date.now()
+  });
+};
+
+async function formatBalances(balances, chain) {
+  const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+
+  // Get unique token addresses from all balances
+  const tokenAddresses = new Set([WRAPPED_SOL_MINT]); // Always include wrapped SOL
+  balances.forEach(wallet => {
+    wallet.tokenBalances.forEach(token => {
+      tokenAddresses.add(token.tokenAddress);
+    });
+  });
+
+  // Fetch all token info from cache
+  const tokenInfos = await prismaQuery.mintDataCache.findMany({
+    where: {
+      mintAddress: {
+        in: Array.from(tokenAddresses)
+      },
+      chain: chain
+    }
+  });
+
+  // Create token info map for quick lookup
+  const tokenInfoMap = new Map(
+    tokenInfos.map(info => [info.mintAddress, info])
+  );
+
+  // Initialize result structure
+  const result = {
+    native: {
+      name: "Solana",
+      symbol: "SOL",
+      decimals: 9,
+      imageUrl: "https://assets.coingecko.com/coins/images/4128/standard/solana.png?1718769756",
+      total: 0,
+      usdValue: 0,
+      balances: []
+    },
+    spl: []
+  };
+
+  // Process each wallet's balances
+  balances.forEach(wallet => {
+    // Add native balance
+    const nativeAmount = wallet.nativeBalance / LAMPORTS_PER_SOL;
+    if (nativeAmount > 0) {
+      result.native.total += nativeAmount;
+      result.native.balances.push({
+        address: wallet.address,
+        amount: nativeAmount
+      });
+    }
+
+    // Process token balances
+    wallet.tokenBalances.forEach(token => {
+      const tokenInfo = tokenInfoMap.get(token.tokenAddress);
+      if (!tokenInfo) return; // Skip if no token info
+
+      // Find existing token entry or create new one
+      let tokenEntry = result.spl.find(t => t.mintAddress === token.tokenAddress);
+      
+      if (!tokenEntry) {
+        tokenEntry = {
+          mintAddress: tokenInfo.mintAddress,
+          name: tokenInfo.name,
+          symbol: tokenInfo.symbol,
+          decimals: tokenInfo.decimals,
+          imageUrl: tokenInfo.imageUrl,
+          total: 0,
+          usdValue: 0,
+          balances: []
+        };
+        result.spl.push(tokenEntry);
+      }
+
+      // Calculate human readable amount
+      const amount = token.amount / (10 ** tokenInfo.decimals);
+      tokenEntry.total += amount;
+      tokenEntry.balances.push({
+        address: wallet.address,
+        amount: amount
+      });
+    });
+  });
+
+  // Calculate USD values (hardcoded $1 per token)
+  result.native.usdValue = result.native.total * 1;
+  result.spl.forEach(token => {
+    token.usdValue = token.total * 1;
+  });
+
+  // Ensure wrapped SOL exists in the list
+  const wrappedSolInfo = tokenInfoMap.get(WRAPPED_SOL_MINT);
+  if (wrappedSolInfo && !result.spl.find(t => t.mintAddress === WRAPPED_SOL_MINT)) {
+    result.spl.push({
+      mintAddress: wrappedSolInfo.mintAddress,
+      name: wrappedSolInfo.name,
+      symbol: wrappedSolInfo.symbol,
+      decimals: wrappedSolInfo.decimals,
+      imageUrl: wrappedSolInfo.imageUrl,
+      total: 0,
+      usdValue: 0,
+      balances: []
+    });
+  }
+
+  // Sort SPL tokens: Wrapped SOL first, then by USD value
+  result.spl.sort((a, b) => {
+    if (a.mintAddress === WRAPPED_SOL_MINT) return -1;
+    if (b.mintAddress === WRAPPED_SOL_MINT) return 1;
+    return b.usdValue - a.usdValue;
+  });
+
+  return result;
+}
 
 /**
  *
@@ -130,7 +271,7 @@ export const userRoutes = (app, _, done) => {
           mintAddress,
           connection
         )
-        
+
         // Create fallback data using the mint address
         const shortAddr = mintAddress.slice(0, 5).toUpperCase();
         const fallbackData = {
@@ -180,7 +321,7 @@ export const userRoutes = (app, _, done) => {
 
         // Fetch mint data asynchronously
         const mintData = await fetchMintData(mint, accountData);
-        
+
         // Push the processed data into the portfolioData array
         portfolioData.push({
           mint: accountData.mint,
@@ -294,6 +435,55 @@ export const userRoutes = (app, _, done) => {
       return reply.status(500).send({
         success: false,
         error: 'Failed to fetch activities'
+      });
+    }
+  })
+
+  app.get('/balances', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    try {
+      const { chain = "DEVNET" } = request.query;
+
+      // Check cache first
+      const cachedBalance = getCachedUserBalance(request.user.id, chain);
+      if (cachedBalance) {
+        return reply.send(cachedBalance);
+      }
+
+      const connection = new Connection(CHAINS[chain].rpcUrl, "confirmed");
+
+      // Get all user owned addresses that is in Payment table
+      const allPayments = await prismaQuery.payment.findMany({
+        where: {
+          link: {
+            userId: request.user.id
+          }
+        },
+        select: {
+          stealthOwnerPubkey: true
+        },
+        distinct: ['stealthOwnerPubkey'] // Only get unique addresses
+      });
+
+      const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
+      console.log('All addresses', allAddresses);
+
+      const balances = await getWalletsTokensHolding(allAddresses, connection);
+      console.log('Raw balances', balances);
+
+      // Format balances with token info
+      const formattedBalances = await formatBalances(balances, CHAINS[chain].id);
+      console.log('Formatted balances', formattedBalances);
+
+      // Cache the formatted balances
+      setCachedUserBalance(request.user.id, chain, formattedBalances);
+
+      return reply.send(formattedBalances);
+    } catch (error) {
+      console.error('Error fetching balances:', error);
+      return reply.status(500).send({
+        error: 'Failed to fetch balances'
       });
     }
   })

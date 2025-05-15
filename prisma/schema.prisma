@@ -59,10 +59,13 @@ model Link {
   type       LinkType
   amountType LinkAmountType
 
-  file       File?
-  amountData Json?
+  // For FIXED amount type - stores human readable amount (e.g. 0.5 SOL, not 500000000)
+  amount    Float?
+  mintId    String?
+  mint      MintDataCache? @relation(fields: [mintId], references: [id])
 
-  payments Payment[]
+  file       File?
+  payments   Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -146,6 +149,7 @@ model MintDataCache {
 
   payments Payment[]
   withdrawals Withdrawal[]
+  links Link[]
 
   name        String
   symbol      String

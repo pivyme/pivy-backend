@@ -1,8 +1,9 @@
 import * as metaplex from '@metaplex-foundation/js';
 import * as solanaWeb3 from '@solana/web3.js';
-import { getMint } from "@solana/spl-token";
+import { AccountLayout, getMint, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { getIPFSData } from './ipfsUtils.js';
 import BN from 'bn.js';
+import { sleep } from './miscUtils.js';
 
 /**
  * Get the token info
@@ -88,7 +89,7 @@ export const getOrCreateTokenCache = async (mintAddress, chain, connection, pris
     // Try to fetch token info first
     let tokenInfo = null;
     let decimals = 0;
-    
+
     try {
       tokenInfo = await getTokenInfo(mintAddress, connection);
       decimals = tokenInfo.decimals;
@@ -137,3 +138,50 @@ export const getOrCreateTokenCache = async (mintAddress, chain, connection, pris
     throw error;
   }
 };
+
+export const getWalletsTokensHolding = async (addresses, connection) => {
+  // Process all addresses in parallel for better performance
+  const walletsPromises = addresses.map(async (address) => {
+    const pubKey = new solanaWeb3.PublicKey(address);
+
+    try {
+      // Get native SOL balance
+      const nativeBalance = await connection.getBalance(pubKey);
+
+      // Get token accounts
+      const tokenAccounts = await connection.getTokenAccountsByOwner(
+        pubKey,
+        { programId: TOKEN_PROGRAM_ID },
+        'confirmed'
+      );
+
+      // Parse token accounts and filter out zero balances
+      const tokenBalances = tokenAccounts.value
+        .map(({ account }) => {
+          const accountData = AccountLayout.decode(account.data);
+          return {
+            tokenAddress: new solanaWeb3.PublicKey(accountData.mint).toString(),
+            amount: Number(accountData.amount)
+          };
+        })
+        .filter(token => token.amount > 0); // Remove zero balance tokens
+
+      return {
+        address,
+        nativeBalance: nativeBalance / solanaWeb3.LAMPORTS_PER_SOL, // Convert lamports to SOL
+        tokenBalances
+      };
+    } catch (error) {
+      console.error(`Error fetching balances for address ${address}:`, error);
+      return {
+        address,
+        nativeBalance: 0,
+        tokenBalances: []
+      };
+    } finally {
+      await sleep(1500);
+    }
+  });
+
+  return Promise.all(walletsPromises);
+}

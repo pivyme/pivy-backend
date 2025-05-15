@@ -28,7 +28,8 @@ export const addressRoutes = (app, _, done) => {
                   filename: true,
                   size: true,
                 }
-              }
+              },
+              mint: true // Include mint data directly
             }
           }
         }
@@ -58,22 +59,21 @@ export const addressRoutes = (app, _, done) => {
       const metaSpendPub = bs58.encode(await ed.getPublicKey(spendScalar));
       const metaViewPub = bs58.encode(await ed.getPublicKey(viewScalar));
 
-      if(link.amountType === 'FIXED'){
-        const tokenInfo = await prismaQuery.mintDataCache.findFirst({
-          where: {
-            mintAddress: link.amountData.mintAddress
-          }
-        })
-
-        link.tokenInfo = tokenInfo;
-      }
+      // Format the link data
+      const linkData = {
+        ...link,
+        amount: link.amount,
+        chainAmount: link.amount && link.mint ? 
+          BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
+          null
+      };
 
       const data = {
         username: user.username,
         tag: link.tag,
         metaSpendPub: metaSpendPub,
         metaViewPub: metaViewPub,
-        linkData: link
+        linkData: linkData
       }
 
       return reply.status(200).send(data);

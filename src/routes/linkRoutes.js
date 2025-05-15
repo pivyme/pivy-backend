@@ -52,6 +52,7 @@ export const linkRoutes = (app, _, done) => {
         type: data.type.toUpperCase(),
         emoji: data.emoji,
         backgroundColor: data.backgroundColor,
+        description: data.description,
       };
 
       let link;
@@ -61,13 +62,15 @@ export const linkRoutes = (app, _, done) => {
         const token = JSON.parse(request.body.token.value);
         const tokenInfo = await getOrCreateTokenInfo(chain, token);
         baseLinkData.amountType = 'FIXED';
-        baseLinkData.amountData = {
-          mintAddress: tokenInfo.mintAddress,
-          amount: Number(request.body.amount.value) * (10 ** tokenInfo.decimals)
+        // Store the human readable amount directly
+        baseLinkData.amount = Number(request.body.amount.value);
+        baseLinkData.mint = {
+          connect: {
+            id: tokenInfo.id
+          }
         };
       } else {
         baseLinkData.amountType = 'OPEN';
-        baseLinkData.amountData = null;
       }
 
       // Create the link with file if it's a download type
@@ -85,12 +88,16 @@ export const linkRoutes = (app, _, done) => {
             }
           },
           include: {
-            file: true
+            file: true,
+            mint: true
           }
         });
       } else {
         link = await prismaQuery.link.create({
-          data: baseLinkData
+          data: baseLinkData,
+          include: {
+            mint: true
+          }
         });
       }
 
@@ -102,9 +109,18 @@ export const linkRoutes = (app, _, done) => {
         };
       }
 
+      // Format the response to include both UI and chain amounts
+      const responseLink = {
+        ...link,
+        amount: link.amount, // Already in human readable format
+        chainAmount: link.amount && link.mint ? 
+          BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
+          null
+      };
+
       return reply.status(200).send({
         message: "Link created successfully",
-        data: link
+        data: responseLink
       });
     } catch (error) {
       console.log('Error creating link', error);
@@ -129,65 +145,57 @@ export const linkRoutes = (app, _, done) => {
   app.get('/my-links', {
     preHandler: [authMiddleware],
   }, async (request, reply) => {
-    const { chain = 'DEVNET' } = request.query;
-    const links = await prismaQuery.link.findMany({
-      where: {
-        userId: request.user.id,
-      },
-      select: {
-        file: {
-          select: {
-            id: true,
-            filename: true,
-            size: true,
+    try {
+      const links = await prismaQuery.link.findMany({
+        where: {
+          userId: request.user.id,
+        },
+        include: {
+          file: {
+            select: {
+              id: true,
+              filename: true,
+              size: true,
+            }
+          },
+          mint: true,
+          user: {
+            select: {
+              username: true,
+            }
           }
         },
-        tag: true,
-        label: true,
-        type: true,
-        description: true,
-        amountType: true,
-        amountData: true,
-        emoji: true,
-        backgroundColor: true,
-        user: {
-          select: {
-            username: true,
-          }
+        orderBy: {
+          createdAt: 'desc'
         }
-      }
-    });
-
-    let linkObjects = []
-    for (const link of links) {
-      let tokenInfo = null;
-      if (link.amountType === 'FIXED') {
-        tokenInfo = await prismaQuery.mintDataCache.findFirst({
-          where: {
-            mintAddress: link.amountData.mintAddress,
-          }
-        });
-      }
-
-      linkObjects.push({
-        ...link,
-        tokenInfo,
       });
 
-      let linkPreview = ""
-      if (link.tag === "") {
-        linkPreview = `pivy.me/${link.user.username}`
-      } else {
-        linkPreview = `pivy.me/${link.user.username}/${link.tag}`
-      }
+      const linkObjects = links.map(link => {
+        let linkPreview = link.tag === "" 
+          ? `pivy.me/${link.user.username}`
+          : `pivy.me/${link.user.username}/${link.tag}`;
 
-      linkObjects.push({
-        ...link,
-        linkPreview,
+        return {
+          ...link,
+          linkPreview,
+          // Amount is already in human readable format
+          amount: link.amount,
+          // Add chain amount if fixed amount type
+          chainAmount: link.amount && link.mint ? 
+            BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
+            null
+        };
+      });
+
+      return reply.status(200).send(linkObjects);
+    } catch (error) {
+      console.error('Error fetching links:', error);
+      return reply.status(500).send({
+        message: "Error fetching links",
+        error: error.message,
+        data: null
       });
     }
-
-    return reply.status(200).send(linkObjects);
   });
 
   // Fetch file
