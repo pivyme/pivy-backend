@@ -11,7 +11,7 @@ const CACHE_DURATION = 15 * 1000; // 15 seconds in milliseconds
 
 // Balance cache for user balances
 const userBalanceCache = new Map();
-const USER_BALANCE_CACHE_DURATION = 30 * 1000; // 30 seconds in milliseconds
+const USER_BALANCE_CACHE_DURATION = 120 * 1000; // 30 seconds in milliseconds
 
 const getCachedBalance = (address) => {
   const cached = balanceCache.get(address);
@@ -55,7 +55,7 @@ const setCachedUserBalance = (userId, chain, data) => {
   });
 };
 
-async function formatBalances(balances, chain) {
+async function formatBalances(balances, chain, addressToEphemeralMap) {
   const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 
   // Get unique token addresses from all balances
@@ -81,6 +81,27 @@ async function formatBalances(balances, chain) {
     tokenInfos.map(info => [info.mintAddress, info])
   );
 
+  // Helper function to format amount based on decimals
+  const formatAmount = (amount, decimals) => {
+    // Convert to string and split at decimal point
+    const [whole, fraction = ""] = amount.toString().split(".");
+    
+    // If no decimal part, return as is
+    if (!fraction) return amount;
+
+    // Truncate to max decimals
+    const truncated = fraction.slice(0, decimals);
+    
+    // Remove trailing zeros
+    const cleaned = truncated.replace(/0+$/, "");
+    
+    // If only zeros after decimal, return whole number
+    if (!cleaned) return Number(whole);
+    
+    // Combine whole and truncated fraction
+    return Number(`${whole}.${cleaned}`);
+  };
+
   // Initialize result structure
   const result = {
     native: {
@@ -95,6 +116,32 @@ async function formatBalances(balances, chain) {
     spl: []
   };
 
+  // Get all payments to fetch memos
+  const allPayments = await prismaQuery.payment.findMany({
+    where: {
+      stealthOwnerPubkey: {
+        in: balances.map(b => b.address)
+      }
+    },
+    select: {
+      stealthOwnerPubkey: true,
+      memo: true
+    }
+  });
+
+  // Create a map of address to memo
+  const addressToMemoMap = new Map();
+  allPayments.forEach(payment => {
+    if (payment.memo) {
+      // First remove the array index if it exists
+      const withoutIndex = payment.memo.replace(/^\[\d+\]\s*/, '');
+      // Then try to extract content from angle brackets if they exist
+      const memoMatch = withoutIndex.match(/<(.+)>/);
+      const cleanMemo = memoMatch ? memoMatch[1] : withoutIndex;
+      addressToMemoMap.set(payment.stealthOwnerPubkey, cleanMemo);
+    }
+  });
+
   // Process each wallet's balances
   balances.forEach(wallet => {
     // Add native balance
@@ -103,11 +150,17 @@ async function formatBalances(balances, chain) {
       result.native.total += nativeAmount;
       result.native.balances.push({
         address: wallet.address,
-        amount: nativeAmount
+        ephemeralPubkey: addressToEphemeralMap.get(wallet.address),
+        memo: addressToMemoMap.get(wallet.address),
+        amount: formatAmount(nativeAmount, 9) // SOL has 9 decimals
       });
     }
+  });
+  // Format the native total
+  result.native.total = formatAmount(result.native.total, 9);
 
-    // Process token balances
+  // Process token balances
+  balances.forEach(wallet => {
     wallet.tokenBalances.forEach(token => {
       const tokenInfo = tokenInfoMap.get(token.tokenAddress);
       if (!tokenInfo) return; // Skip if no token info
@@ -129,14 +182,21 @@ async function formatBalances(balances, chain) {
         result.spl.push(tokenEntry);
       }
 
-      // Calculate human readable amount
+      // Calculate human readable amount with proper decimals
       const amount = token.amount / (10 ** tokenInfo.decimals);
       tokenEntry.total += amount;
       tokenEntry.balances.push({
         address: wallet.address,
-        amount: amount
+        ephemeralPubkey: addressToEphemeralMap.get(wallet.address),
+        memo: addressToMemoMap.get(wallet.address),
+        amount: formatAmount(amount, tokenInfo.decimals)
       });
     });
+  });
+
+  // Format all SPL token totals
+  result.spl.forEach(token => {
+    token.total = formatAmount(token.total, token.decimals);
   });
 
   // Calculate USD values (hardcoded $1 per token)
@@ -404,8 +464,81 @@ export const userRoutes = (app, _, done) => {
         }
       });
 
-      // Transform the data for frontend consumption
-      const activities = payments.map(payment => ({
+      // Get all withdrawals for the user
+      const withdrawals = await prismaQuery.withdrawal.findMany({
+        where: {
+          userId: request.user.id
+        },
+        include: {
+          mint: {
+            select: {
+              name: true,
+              symbol: true,
+              decimals: true,
+              imageUrl: true
+            }
+          }
+        },
+        orderBy: {
+          timestamp: 'desc'
+        }
+      });
+
+      // Group withdrawals by txHash and calculate totals
+      const groupedWithdrawals = withdrawals.reduce((acc, withdrawal) => {
+        if (!acc[withdrawal.txHash]) {
+          acc[withdrawal.txHash] = {
+            id: withdrawal.txHash,
+            type: 'WITHDRAWAL',
+            timestamp: withdrawal.timestamp,
+            chain: withdrawal.chain,
+            destinationPubkey: withdrawal.destinationPubkey,
+            // Group amounts by token
+            tokens: {}
+          };
+        }
+
+        // Add or update token amount
+        const token = withdrawal.mint;
+        const tokenKey = token.symbol;
+        if (!acc[withdrawal.txHash].tokens[tokenKey]) {
+          acc[withdrawal.txHash].tokens[tokenKey] = {
+            symbol: token.symbol,
+            name: token.name,
+            decimals: token.decimals,
+            imageUrl: token.imageUrl,
+            total: "0"
+          };
+        }
+        
+        // Add the amounts (they are strings, so we need to convert to BigInt)
+        const currentTotal = BigInt(acc[withdrawal.txHash].tokens[tokenKey].total);
+        const newAmount = BigInt(withdrawal.amount);
+        acc[withdrawal.txHash].tokens[tokenKey].total = (currentTotal + newAmount).toString();
+
+        return acc;
+      }, {});
+
+      // Transform withdrawals into the same format as payments
+      const withdrawalActivities = Object.values(groupedWithdrawals).map(withdrawal => {
+        // Get the first token's info for the main activity display
+        const [firstToken, ...otherTokens] = Object.values(withdrawal.tokens);
+        return {
+          ...withdrawal,
+          amount: firstToken.total,
+          token: {
+            symbol: firstToken.symbol,
+            name: firstToken.name,
+            decimals: firstToken.decimals,
+            imageUrl: firstToken.imageUrl
+          },
+          // Include other tokens if there are any
+          additionalTokens: otherTokens.length > 0 ? otherTokens : undefined
+        };
+      });
+
+      // Transform payment data for frontend consumption
+      const paymentActivities = payments.map(payment => ({
         id: payment.txHash,
         type: 'PAYMENT',
         timestamp: payment.timestamp,
@@ -429,7 +562,11 @@ export const userRoutes = (app, _, done) => {
         chain: payment.chain
       }));
 
-      return reply.send(activities);
+      // Combine and sort all activities by timestamp
+      const allActivities = [...paymentActivities, ...withdrawalActivities]
+        .sort((a, b) => b.timestamp - a.timestamp);
+
+      return reply.send(allActivities);
     } catch (error) {
       console.error('Error fetching activities:', error);
       return reply.status(500).send({
@@ -461,10 +598,17 @@ export const userRoutes = (app, _, done) => {
           }
         },
         select: {
-          stealthOwnerPubkey: true
+          stealthOwnerPubkey: true,
+          ephemeralPubkey: true,
+          memo: true
         },
-        distinct: ['stealthOwnerPubkey'] // Only get unique addresses
+        distinct: ['stealthOwnerPubkey']
       });
+
+      // Create a map of address to ephemeral key
+      const addressToEphemeralMap = new Map(
+        allPayments.map(p => [p.stealthOwnerPubkey, p.ephemeralPubkey])
+      );
 
       const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
       console.log('All addresses', allAddresses);
@@ -472,8 +616,8 @@ export const userRoutes = (app, _, done) => {
       const balances = await getWalletsTokensHolding(allAddresses, connection);
       console.log('Raw balances', balances);
 
-      // Format balances with token info
-      const formattedBalances = await formatBalances(balances, CHAINS[chain].id);
+      // Format balances with token info and ephemeral keys
+      const formattedBalances = await formatBalances(balances, CHAINS[chain].id, addressToEphemeralMap);
       console.log('Formatted balances', formattedBalances);
 
       // Cache the formatted balances

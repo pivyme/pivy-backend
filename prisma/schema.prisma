@@ -26,8 +26,11 @@ model User {
 
   metaSpendPriv String
   metaViewPriv  String
+  metaSpendPub  String
+  metaViewPub   String
 
   links Link[]
+  withdrawals Withdrawal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -111,6 +114,7 @@ model Payment {
   amount BigInt
 
   label    String?
+  memo     String?
   announce Boolean @default(false)
 
   linkId String?
@@ -122,7 +126,7 @@ model Payment {
 }
 
 model Withdrawal {
-  txHash String @id
+  txHash String
   chain  Chain
 
   slot      Int
@@ -130,6 +134,9 @@ model Withdrawal {
 
   stealthOwnerPubkey String
   destinationPubkey  String
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   amount      String
 
@@ -139,6 +146,8 @@ model Withdrawal {
   mintId String
 
   createdAt DateTime @default(now())
+
+  @@id([txHash, stealthOwnerPubkey])
 }
 
 model MintDataCache {

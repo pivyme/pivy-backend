@@ -60,6 +60,8 @@ export const authRoutes = (app, _, done) => {
             walletAddress: userAddress,
             metaSpendPriv: Buffer.from(spendKey.secretKey.slice(0, 32)).toString("hex"),
             metaViewPriv: Buffer.from(viewKey.secretKey.slice(0, 32)).toString("hex"),
+            metaSpendPub: spendKey.publicKey.toBase58(),
+            metaViewPub: viewKey.publicKey.toBase58(),
             links: {
               create: {
                 tag: ``,

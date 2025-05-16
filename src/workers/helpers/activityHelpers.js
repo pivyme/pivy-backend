@@ -110,16 +110,93 @@ export const processPaymentTx = async ({
 export const processWithdrawalTx = async ({
   txHash
 }) => {
-  const withdrawalTx = await prismaQuery.withdrawal.findUnique({
+  // Get all withdrawals for this transaction
+  const withdrawalTxs = await prismaQuery.withdrawal.findMany({
     where: {
       txHash: txHash
     },
-  })
+    include: {
+      mint: {
+        select: {
+          symbol: true,
+          decimals: true
+        }
+      }
+    }
+  });
 
-  console.log("Processing withdrawal tx: ", withdrawalTx)
-  // Will determine which withdrawal is it and save it to the activity table
+  console.log("Processing withdrawal txs: ", withdrawalTxs);
+
+  for (const withdrawalTx of withdrawalTxs) {
+    // Find the payment that has this stealth owner pubkey
+    const payment = await prismaQuery.payment.findFirst({
+      where: {
+        stealthOwnerPubkey: withdrawalTx.stealthOwnerPubkey
+      },
+      include: {
+        link: {
+          select: {
+            userId: true
+          }
+        }
+      }
+    });
+
+    if (!payment || !payment.link) {
+      console.log("No payment or link found for stealth address", {
+        withdrawalTx: withdrawalTx,
+      });
+      // Mark as processed if we can't find the owner
+      // await prismaQuery.withdrawal.update({
+      //   where: {
+      //     txHash_stealthOwnerPubkey: {
+      //       txHash: withdrawalTx.txHash,
+      //       stealthOwnerPubkey: withdrawalTx.stealthOwnerPubkey
+      //     }
+      //   },
+      //   data: {
+      //     isProcessed: true,
+      //   }
+      // });
+      continue;
+    }
+
+    const userId = payment.link.userId;
+    console.log("Found owner for withdrawal: ", {
+      withdrawalTx: withdrawalTx,
+      userId: userId,
+    });
+
+    // Build the activity data here
+    const activityData = {
+      txHash: withdrawalTx.txHash,
+      userId: userId,
+      amount: withdrawalTx.amount,
+      token: {
+        symbol: withdrawalTx.mint.symbol,
+        decimals: withdrawalTx.mint.decimals
+      },
+      destinationPubkey: withdrawalTx.destinationPubkey,
+      timestamp: withdrawalTx.timestamp
+    };
+
+    console.log("Activity data: ", activityData);
+
+    // Mark this withdrawal as processed and associate with user
+    await prismaQuery.withdrawal.update({
+      where: {
+        txHash_stealthOwnerPubkey: {
+          txHash: withdrawalTx.txHash,
+          stealthOwnerPubkey: withdrawalTx.stealthOwnerPubkey
+        }
+      },
+      data: {
+        userId: userId,
+        isProcessed: true,
+      }
+    });
+  }
 }
-
 
 export const processPaymentActivities = async () => {
   const unprocessedPayments = await prismaQuery.payment.findMany({
@@ -138,5 +215,21 @@ export const processPaymentActivities = async () => {
     await processPaymentTx({ txHash: payment.txHash, users: users })
   }
 }
+// processPaymentActivities()
 
-processPaymentActivities()
+export const processWithdrawalActivities = async () => {
+  const unprocessedWithdrawals = await prismaQuery.withdrawal.findMany({
+    where: {
+      isProcessed: false
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: 50
+  })
+
+  for (const withdrawal of unprocessedWithdrawals) {
+    await processWithdrawalTx({ txHash: withdrawal.txHash })
+  }
+}
+processWithdrawalActivities()

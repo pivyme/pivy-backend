@@ -56,8 +56,8 @@ export const addressRoutes = (app, _, done) => {
       // expose ONLY the public pieces
       const spendScalar = Buffer.from(user.metaSpendPriv, "hex");
       const viewScalar = Buffer.from(user.metaViewPriv, "hex");
-      const metaSpendPub = bs58.encode(await ed.getPublicKey(spendScalar));
-      const metaViewPub = bs58.encode(await ed.getPublicKey(viewScalar));
+      const metaSpendPub = user.metaSpendPub
+      const metaViewPub = user.metaViewPub
 
       // Format the link data
       const linkData = {

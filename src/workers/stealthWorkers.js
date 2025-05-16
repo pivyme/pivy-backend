@@ -3,11 +3,12 @@ import * as anchor from "@coral-xyz/anchor";
 import { CHAINS } from "../config.js";
 import { PIVY_STEALTH_IDL } from "../lib/pivy-stealth/IDL.js";
 import { prismaQuery } from "../lib/prisma.js";
-import { processPaymentTx } from "./helpers/activityHelpers.js";
+import { processPaymentTx, processWithdrawalTx } from "./helpers/activityHelpers.js";
 import { getOrCreateTokenCache } from "../utils/solanaUtils.js";
 import cron from "node-cron";
 
 const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
+const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
 /**
  * Get or create native SOL token cache
@@ -55,6 +56,36 @@ const getOrCreateNativeSOLCache = async (chain) => {
       isInvalid: false
     }
   });
+};
+
+/**
+ * Extract memo data from transaction instructions
+ */
+const extractMemoFromTransaction = (transaction) => {
+  if (!transaction?.transaction?.message?.instructions) {
+    return null;
+  }
+
+  const memoInstruction = transaction.transaction.message.instructions.find(
+    instruction => {
+      // Check if the program ID matches the memo program ID
+      const programId = transaction.transaction.message.accountKeys[instruction.programIdIndex].toBase58();
+      return programId === MEMO_PROGRAM_ID;
+    }
+  );
+
+  if (!memoInstruction) {
+    return null;
+  }
+
+  try {
+    // Decode the memo data
+    const memoData = Buffer.from(memoInstruction.data, 'base64').toString('utf8');
+    return memoData;
+  } catch (error) {
+    console.error('Error decoding memo:', error);
+    return null;
+  }
 };
 
 /**
@@ -110,23 +141,31 @@ export const stealthWorkers = (app, _, done) => {
       const results = []
 
       for (const signature of sigs) {
+        console.log('signature: ', signature)
+
         // Check if the signature is already in the database
         const existingPayment = await prismaQuery.payment.findUnique({
           where: { txHash: signature.signature }
         });
-        const existingWithdrawal = await prismaQuery.withdrawal.findUnique({
-          where: { txHash: signature.signature }
-        });
+        const existingWithdrawal = await prismaQuery.withdrawal.findFirst({
+          where: {
+            txHash: signature.signature,
+          }
+        })
 
-        if (existingPayment || existingWithdrawal) continue;
+        if (existingPayment) continue;
 
         console.log('Processing signature: ', signature.signature)
 
-        const transaction = await connection.getTransaction(signature.signature, { commitment: "confirmed" });
+        const transaction = await connection.getTransaction(signature.signature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0
+        });
         if (!transaction?.meta?.logMessages) continue;
 
         for (const event of parser.parseLogs(transaction.meta.logMessages)) {
           if (event.name === "PaymentEvent") {
+            // Extract memo from transaction
             const eventData = event.data;
             results.push({
               signature: signature.signature,
@@ -140,7 +179,8 @@ export const stealthWorkers = (app, _, done) => {
                 label: Buffer.from(eventData.label).toString("utf8").replace(/\0/g, ""),
                 ephemeralPubkey: eventData.ephPubkey.toBase58(),
                 timestamp: signature.blockTime,
-                announce: eventData.announce
+                announce: eventData.announce,
+                memo: signature.memo
               },
             });
           }
@@ -155,7 +195,7 @@ export const stealthWorkers = (app, _, done) => {
                 destination: eventData.destination.toBase58(),
                 mint: eventData.mint.toBase58(),
                 amount: Number(eventData.amount).toString(),
-                timestamp: signature.blockTime
+                timestamp: signature.blockTime,
               },
             });
           }
@@ -197,6 +237,7 @@ export const stealthWorkers = (app, _, done) => {
               payerPubKey: result.data.payer,
               amount: result.data.amount,
               label: result.data.label,
+              memo: result.data.memo,
               announce: result.data.announce,
               chain: chain.id,
               mint: {
@@ -212,7 +253,25 @@ export const stealthWorkers = (app, _, done) => {
             users: users
           })
         } else if (result.type === 'OUT') {
-          await prismaQuery.withdrawal.create({
+          // Check if withdrawal already exists
+          const existingWithdrawal = await prismaQuery.withdrawal.findUnique({
+            where: {
+              txHash_stealthOwnerPubkey: {
+                txHash: result.signature,
+                stealthOwnerPubkey: result.data.stealthOwner
+              }
+            }
+          });
+
+          if (existingWithdrawal) {
+            console.log('Withdrawal already exists:', {
+              txHash: result.signature,
+              stealthOwnerPubkey: result.data.stealthOwner
+            });
+            continue;
+          }
+
+          const newWithdrawal = await prismaQuery.withdrawal.create({
             data: {
               txHash: result.signature,
               slot: result.slot,
@@ -227,7 +286,15 @@ export const stealthWorkers = (app, _, done) => {
                 }
               }
             }
-          })
+          }).catch(err => {
+            console.log('Error creating withdrawal: ', err)
+          });
+
+          if (newWithdrawal) {
+            await processWithdrawalTx({
+              txHash: newWithdrawal.txHash
+            });
+          }
         }
       }
 
@@ -239,7 +306,7 @@ export const stealthWorkers = (app, _, done) => {
   // handleFetchStealthTransactions()
 
   // Every 5 seconds
-  cron.schedule('*/45 * * * * *', () => {
+  cron.schedule('*/5 * * * * *', () => {
     handleFetchStealthTransactions()
   })
 
