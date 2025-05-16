@@ -27,6 +27,7 @@ export const linkRoutes = (app, _, done) => {
         description: request.body.description?.value,
         emoji: request.body.emoji?.value,
         backgroundColor: request.body.backgroundColor?.value,
+        specialTheme: request.body.specialTheme?.value || 'default',
       };
 
       // Handle file if present
@@ -53,6 +54,7 @@ export const linkRoutes = (app, _, done) => {
         emoji: data.emoji,
         backgroundColor: data.backgroundColor,
         description: data.description,
+        specialTheme: data.specialTheme,
       };
 
       let link;
@@ -64,11 +66,7 @@ export const linkRoutes = (app, _, done) => {
         baseLinkData.amountType = 'FIXED';
         // Store the human readable amount directly
         baseLinkData.amount = Number(request.body.amount.value);
-        baseLinkData.mint = {
-          connect: {
-            id: tokenInfo.id
-          }
-        };
+        baseLinkData.mintId = tokenInfo.id;  // Directly set the mintId
       } else {
         baseLinkData.amountType = 'OPEN';
       }
@@ -237,33 +235,43 @@ export const linkRoutes = (app, _, done) => {
 
 // Helper function to get or create token info
 async function getOrCreateTokenInfo(chain, tokenData) {
-  const tokenInfo = await prismaQuery.mintDataCache.findFirst({
-    where: {
-      mintAddress: tokenData.address
+  try {
+    const chainId = CHAINS[chain].id;
+    
+    // Check if token exists in cache
+    const existingCache = await prismaQuery.mintDataCache.findUnique({
+      where: {
+        mintAddress_chain: {
+          mintAddress: tokenData.address,
+          chain: chainId
+        }
+      }
+    });
+
+    if (existingCache && !existingCache.isInvalid) {
+      return existingCache;
     }
-  });
 
-  if (tokenInfo) return tokenInfo;
+    // Create fallback data using the mint address
+    const shortAddr = tokenData.address.slice(0, 5).toUpperCase();
+    const cacheData = {
+      mintAddress: tokenData.address,
+      chain: chainId,
+      name: tokenData.name || `Unknown Token ${shortAddr}`,
+      symbol: tokenData.symbol || shortAddr,
+      decimals: tokenData.decimals || 0,
+      imageUrl: tokenData.image || null,
+      description: `Token at address ${tokenData.address}`,
+      uriData: {},
+      isInvalid: false
+    };
 
-  const _chain = CHAINS[chain];
-  const connection = new Connection(_chain.rpcUrl, "confirmed");
-  const fetchedTokenInfo = await getTokenInfo(tokenData.address, connection);
-
-  // Create fallback data using the mint address
-  const shortAddr = tokenData.address.slice(0, 5).toUpperCase();
-  const fallbackData = {
-    mintAddress: tokenData.address,
-    chain: _chain.id,
-    name: fetchedTokenInfo?.name || 'Unknown Token',
-    symbol: fetchedTokenInfo?.symbol || shortAddr,
-    decimals: fetchedTokenInfo?.decimals || 0,
-    imageUrl: fetchedTokenInfo?.image || null,
-    description: fetchedTokenInfo?.description || `Token at address ${tokenData.address}`,
-    uriData: fetchedTokenInfo?.uriData || {},
-  };
-
-  // Create and return the token info
-  return await prismaQuery.mintDataCache.create({
-    data: fallbackData
-  });
+    // Create and return the token info
+    return await prismaQuery.mintDataCache.create({
+      data: cacheData
+    });
+  } catch (error) {
+    console.error('Error in getOrCreateTokenInfo:', error);
+    throw error;
+  }
 }

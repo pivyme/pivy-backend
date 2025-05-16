@@ -1,6 +1,6 @@
 import { deriveStealthKeypair, deriveStealthPubFromPriv } from "../../lib/pivy-stealth/pivy-stealth.js"
 import { prismaQuery } from "../../lib/prisma.js"
-
+import cron from "node-cron"
 export const processPaymentTx = async ({
   txHash,
   users
@@ -147,17 +147,17 @@ export const processWithdrawalTx = async ({
         withdrawalTx: withdrawalTx,
       });
       // Mark as processed if we can't find the owner
-      // await prismaQuery.withdrawal.update({
-      //   where: {
-      //     txHash_stealthOwnerPubkey: {
-      //       txHash: withdrawalTx.txHash,
-      //       stealthOwnerPubkey: withdrawalTx.stealthOwnerPubkey
-      //     }
-      //   },
-      //   data: {
-      //     isProcessed: true,
-      //   }
-      // });
+      await prismaQuery.withdrawal.update({
+        where: {
+          txHash_stealthOwnerPubkey: {
+            txHash: withdrawalTx.txHash,
+            stealthOwnerPubkey: withdrawalTx.stealthOwnerPubkey
+          }
+        },
+        data: {
+          isProcessed: true,
+        }
+      });
       continue;
     }
 
@@ -232,4 +232,12 @@ export const processWithdrawalActivities = async () => {
     await processWithdrawalTx({ txHash: withdrawal.txHash })
   }
 }
-processWithdrawalActivities()
+// processWithdrawalActivities()
+
+// For backups if there is any missing payments or withdrawals, run processPaymentActivities() and processWithdrawalActivities() every 30 seconds
+cron.schedule('*/30 * * * * *', () => {
+  processPaymentActivities()
+  processWithdrawalActivities()
+})
+// processPaymentActivities()
+// processWithdrawalActivities()

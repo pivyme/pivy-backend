@@ -59,6 +59,8 @@ model Link {
   label       String // human label (max-32 for on-chain `label`)
   description String?
 
+  specialTheme String @default("default")
+
   type       LinkType
   amountType LinkAmountType
 

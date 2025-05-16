@@ -611,14 +611,14 @@ export const userRoutes = (app, _, done) => {
       );
 
       const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
-      console.log('All addresses', allAddresses);
+      // console.log('All addresses', allAddresses);
 
       const balances = await getWalletsTokensHolding(allAddresses, connection);
-      console.log('Raw balances', balances);
+      // console.log('Raw balances', balances);
 
       // Format balances with token info and ephemeral keys
       const formattedBalances = await formatBalances(balances, CHAINS[chain].id, addressToEphemeralMap);
-      console.log('Formatted balances', formattedBalances);
+      // console.log('Formatted balances', formattedBalances);
 
       // Cache the formatted balances
       setCachedUserBalance(request.user.id, chain, formattedBalances);

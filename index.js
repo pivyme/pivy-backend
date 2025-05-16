@@ -8,6 +8,8 @@ import { authRoutes } from './src/routes/authRoutes.js';
 import { userRoutes } from "./src/routes/userRoutes.js";
 import { addressRoutes } from "./src/routes/addressRoutes.js";
 import { linkRoutes } from "./src/routes/linkRoutes.js";
+import { stealthListener } from "./src/workers/stealthListener.js";
+import { cctpRoutes } from "./src/routes/cctpRoutes.js";
 
 console.log(
   "======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n"
@@ -59,8 +61,12 @@ fastify.register(linkRoutes, {
   prefix: '/link'
 })
 
+fastify.register(cctpRoutes, {
+  prefix: '/cctp'
+})
+
 /* --------------------------------- Workers -------------------------------- */
-fastify.register(stealthWorkers)
+// fastify.register(stealthWorkers)
 
 const start = async () => {
   try {
