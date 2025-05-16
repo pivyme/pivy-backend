@@ -59,36 +59,6 @@ const getOrCreateNativeSOLCache = async (chain) => {
 };
 
 /**
- * Extract memo data from transaction instructions
- */
-const extractMemoFromTransaction = (transaction) => {
-  if (!transaction?.transaction?.message?.instructions) {
-    return null;
-  }
-
-  const memoInstruction = transaction.transaction.message.instructions.find(
-    instruction => {
-      // Check if the program ID matches the memo program ID
-      const programId = transaction.transaction.message.accountKeys[instruction.programIdIndex].toBase58();
-      return programId === MEMO_PROGRAM_ID;
-    }
-  );
-
-  if (!memoInstruction) {
-    return null;
-  }
-
-  try {
-    // Decode the memo data
-    const memoData = Buffer.from(memoInstruction.data, 'base64').toString('utf8');
-    return memoData;
-  } catch (error) {
-    console.error('Error decoding memo:', error);
-    return null;
-  }
-};
-
-/**
  *
  * @param {import("fastify").FastifyInstance} app
  * @param {*} _

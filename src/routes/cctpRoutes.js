@@ -242,7 +242,8 @@ export const cctpRoutes = (app, _, done) => {
         'tokenMessengerMinterProgramInfo',
         'tokenTransmitterProgramInfo',
         'encryptedPayload',
-        'linkId'
+        'linkId',
+        'ephPub'
       ];
       
       const validationResult = await validateRequiredFields(request.body, requiredFields, reply);
@@ -262,6 +263,7 @@ export const cctpRoutes = (app, _, done) => {
         tokenTransmitterProgramInfo,
         encryptedPayload,
         linkId,
+        ephPub,
         chain = 'DEVNET'
       } = request.body;
 
@@ -531,8 +533,7 @@ export const cctpRoutes = (app, _, done) => {
             slot: slot,
             timestamp: timestamp,
             stealthOwnerPubkey: stealthOwnerPub,
-            // Using stealthOwnerPub as placeholder for ephPubkey (not available)
-            ephemeralPubkey: stealthOwnerPub,
+            ephemeralPubkey: ephPub,
             payerPubKey: provider.publicKey.toBase58(),
             amount: midBalance.amount.toString(),
             label: link.label,
