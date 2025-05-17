@@ -168,6 +168,7 @@ model MintDataCache {
   imageUrl    String?
   description String?
   uriData     Json?
+  priceUsd    Float? @default(0)
 
   isInvalid Boolean @default(false)
 
@@ -175,4 +176,14 @@ model MintDataCache {
   updatedAt DateTime @updatedAt
 
   @@unique([mintAddress, chain])
+}
+
+
+model MainPrice {
+  id       String @id @default(cuid())
+  symbol   String @unique
+  priceUsd Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

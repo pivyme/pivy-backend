@@ -4,6 +4,7 @@ import { AccountLayout, getMint, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { getIPFSData } from './ipfsUtils.js';
 import BN from 'bn.js';
 import { sleep } from './miscUtils.js';
+import axios from 'axios';
 
 /**
  * Get the token info
@@ -184,4 +185,20 @@ export const getWalletsTokensHolding = async (addresses, connection) => {
   });
 
   return Promise.all(walletsPromises);
+}
+
+export const dexscreenerGetTokenPrice = async (tokenAddress) => {
+  const res = await axios({
+    url: `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`,
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+
+  // Search on .pairs where first chainId is 'solana'
+  const solanaPair = res.data.pairs.find(pair => pair.chainId === 'solana');
+  const priceUsd = parseFloat(solanaPair.priceUsd);
+
+  return priceUsd;
 }

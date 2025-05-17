@@ -7,7 +7,7 @@ import { getTokenInfo, getWalletsTokensHolding } from "../utils/solanaUtils.js";
 
 // Simple in-memory cache implementation
 const balanceCache = new Map();
-const CACHE_DURATION = 15 * 1000; // 15 seconds in milliseconds
+const CACHE_DURATION = 5 * 1000; // 15 seconds in milliseconds
 
 // Balance cache for user balances
 const userBalanceCache = new Map();
@@ -619,6 +619,48 @@ export const userRoutes = (app, _, done) => {
       // Format balances with token info and ephemeral keys
       const formattedBalances = await formatBalances(balances, CHAINS[chain].id, addressToEphemeralMap);
       // console.log('Formatted balances', formattedBalances);
+
+      // Get SOL price from mintDataCache
+      const solCache = await prismaQuery.mintDataCache.findUnique({
+        where: {
+          mintAddress_chain: {
+            mintAddress: 'So11111111111111111111111111111111111111112',
+            chain: CHAINS[chain].id
+          }
+        },
+        select: {
+          priceUsd: true
+        }
+      });
+
+      // Get all token mint addresses from balances
+      const tokenMints = formattedBalances.spl.map(t => t.mintAddress);
+      
+      // Get all token prices from mintDataCache
+      const tokenPrices = await prismaQuery.mintDataCache.findMany({
+        where: {
+          AND: [
+            { mintAddress: { in: tokenMints } },
+            { chain: CHAINS[chain].id }
+          ]
+        },
+        select: {
+          mintAddress: true,
+          priceUsd: true
+        }
+      });
+
+      // Create price lookup map
+      const priceMap = new Map(tokenPrices.map(t => [t.mintAddress, t.priceUsd ?? 0]));
+
+      // Update native SOL USD value
+      formattedBalances.native.usdValue = formattedBalances.native.total * (solCache?.priceUsd ?? 0);
+
+      // Update token USD values
+      formattedBalances.spl = formattedBalances.spl.map(token => ({
+        ...token,
+        usdValue: token.total * (priceMap.get(token.mintAddress) ?? 0)
+      }));
 
       // Cache the formatted balances
       setCachedUserBalance(request.user.id, chain, formattedBalances);

@@ -10,6 +10,7 @@ import { addressRoutes } from "./src/routes/addressRoutes.js";
 import { linkRoutes } from "./src/routes/linkRoutes.js";
 import { stealthListener } from "./src/workers/stealthListener.js";
 import { cctpRoutes } from "./src/routes/cctpRoutes.js";
+import { tokenWorker } from "./src/workers/tokenWorkers.js";
 
 console.log(
   "======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n"
@@ -67,6 +68,7 @@ fastify.register(cctpRoutes, {
 
 /* --------------------------------- Workers -------------------------------- */
 fastify.register(stealthWorkers)
+fastify.register(tokenWorker)
 
 const start = async () => {
   try {
