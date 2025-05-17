@@ -197,6 +197,11 @@ export const stealthWorkers = (app, _, done) => {
         const users = await prismaQuery.user.findMany({})
 
         if (result.type === 'IN') {
+          if (result.data.announce === true) {
+            // Skip announcement payments
+            continue;
+          }
+
           const newPayment = await prismaQuery.payment.create({
             data: {
               txHash: result.signature,
@@ -216,10 +221,12 @@ export const stealthWorkers = (app, _, done) => {
                 }
               }
             }
-          })
+          }).catch(err => {
+            console.log('Error creating payment: ', err)
+          });
 
           await processPaymentTx({
-            txHash: newPayment.txHash,
+            txHash: result.signature,
             users: users
           })
         } else if (result.type === 'OUT') {

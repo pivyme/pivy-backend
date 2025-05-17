@@ -202,6 +202,7 @@ export const processPaymentActivities = async () => {
   const unprocessedPayments = await prismaQuery.payment.findMany({
     where: {
       isProcessed: false
+      // linkId: null
     },
     orderBy: {
       createdAt: "desc"

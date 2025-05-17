@@ -1,13 +1,13 @@
 import bs58 from 'bs58'
 import axios from 'axios'
-import { 
-  PublicKey, 
-  Keypair, 
-  SystemProgram, 
-  Connection, 
-  sendAndConfirmTransaction, 
+import {
+  PublicKey,
+  Keypair,
+  SystemProgram,
+  Connection,
+  sendAndConfirmTransaction,
   Transaction,
-  TransactionInstruction 
+  TransactionInstruction
 } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -23,6 +23,7 @@ import { CHAINS } from '../config.js';
 import { validateRequiredFields } from '../utils/validationUtils.js';
 import { prismaQuery } from '../lib/prisma.js';
 import { getOrCreateTokenCache } from '../utils/solanaUtils.js';
+import { processPaymentTx } from '../workers/helpers/activityHelpers.js';
 
 const { Program, AnchorProvider, setProvider } = anchor;
 const { BN } = anchor.default;
@@ -91,13 +92,13 @@ const hexToBytes = (hex) => Buffer.from(hex.replace(/^0x/, ''), 'hex');
 // Helper function to poll for transaction confirmation
 const pollForConfirmation = async (connection, signature, maxAttempts = 30) => {
   console.log("🔍 Polling for confirmation of signature:", signature);
-  
+
   for (let i = 0; i < maxAttempts; i++) {
     try {
       // Use getSignatureStatuses RPC with searchTransactionHistory to avoid param errors
       const response = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
       const status = response.value[0];
-      
+
       // If there's an error, immediately stop polling and throw
       if (status?.err) {
         const errorStr = JSON.stringify(status.err);
@@ -118,14 +119,14 @@ const pollForConfirmation = async (connection, signature, maxAttempts = 30) => {
         console.error(`❌ Transaction failed, stopping polling:`, error.message);
         throw error;
       }
-      
+
       console.warn(`⚠️ Polling attempt ${i + 1} failed:`, error.message);
-      
+
       // If it's the last attempt, throw the error
       if (i === maxAttempts - 1) {
         throw error;
       }
-      
+
       // Wait before retrying
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
@@ -150,7 +151,7 @@ const createRobustConnection = (endpoint, options = {}) => {
 const customFetch = async (url, options) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
-  
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -171,32 +172,32 @@ const sendAndConfirmWithRetry = async (connection, transaction, signers, options
       const latestBlockhash = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.feePayer = signers[0].publicKey;
-      
+
       console.log(`🔄 Sending transaction attempt ${i + 1}/${maxRetries}`);
-      
+
       // Send transaction
       const signature = await connection.sendTransaction(transaction, signers, {
         skipPreflight: true,
         ...options
       });
-      
+
       console.log(`📤 Transaction sent, signature: ${signature}`);
 
       // Poll for confirmation instead of using WebSocket
       await pollForConfirmation(connection, signature);
-      
+
       return signature;
     } catch (error) {
       console.error(`❌ Transaction attempt ${i + 1} failed:`, error.message);
-      
+
       // If error is related to a custom program error, stop retrying
       if (error.message.includes("Custom")) {
         console.error(`Program error detected, stopping retry:`, error.message);
         throw error;
       }
-      
+
       lastError = error;
-      
+
       // Wait before retrying
       await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
     }
@@ -210,7 +211,7 @@ const verifyTokenBalance = async (connection, tokenAccount, expectedAmount) => {
     const balance = await connection.getTokenAccountBalance(tokenAccount);
     const actualAmount = new BN(balance.value.amount);
     const expected = new BN(expectedAmount);
-    
+
     if (actualAmount.lt(expected)) {
       throw new Error(`Token balance verification failed. Expected: ${expected.toString()}, Actual: ${actualAmount.toString()}`);
     }
@@ -245,7 +246,7 @@ export const cctpRoutes = (app, _, done) => {
         'linkId',
         'ephPub'
       ];
-      
+
       const validationResult = await validateRequiredFields(request.body, requiredFields, reply);
       if (validationResult !== true) {
         return validationResult;
@@ -305,7 +306,7 @@ export const cctpRoutes = (app, _, done) => {
 
       // Create connection without WebSocket
       const connection = createRobustConnection(chainConfig.heliusRpcUrl);
-      
+
       const provider = new AnchorProvider(
         connection,
         {
@@ -326,7 +327,7 @@ export const cctpRoutes = (app, _, done) => {
       setProvider(provider);
 
       // Get the USDC mint address based on chain
-      const usdcMint = new PublicKey(chain === 'MAINNET' 
+      const usdcMint = new PublicKey(chain === 'MAINNET'
         ? 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  // Mainnet USDC
         : '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'  // Devnet USDC
       );
@@ -395,7 +396,7 @@ export const cctpRoutes = (app, _, done) => {
       // Check if ATA exists, if not create it
       const stealthAtaPubkey = new PublicKey(stealthAta);
       const stealthOwnerPubkey = new PublicKey(stealthOwnerPub);
-      
+
       let ataExists = false;
       try {
         await connection.getTokenAccountBalance(stealthAtaPubkey);
@@ -523,7 +524,7 @@ export const cctpRoutes = (app, _, done) => {
         );
 
         // Create Payment entry (ignore if already exists)
-        await prismaQuery.payment.upsert({
+        const newPayment = await prismaQuery.payment.upsert({
           where: {
             txHash: announceSig
           },
@@ -547,7 +548,14 @@ export const cctpRoutes = (app, _, done) => {
               connect: { id: tokenCache.id }
             }
           }
+        }).catch(err => {
+          console.error("Error saving payment: ", err)
         });
+
+        console.log("Processing payment tx: ", announceSig)
+        await processPaymentTx({
+          txHash: announceSig
+        })
 
         console.log('\n📝 Payment saved:', announceSig);
       } catch (saveErr) {
@@ -566,7 +574,7 @@ export const cctpRoutes = (app, _, done) => {
 
     } catch (error) {
       console.error('\n❌ CCTP Error:', error.message);
-      
+
       return reply.code(500).send({
         error: 'CCTP transfer failed',
         details: error.message,
