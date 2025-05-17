@@ -11,7 +11,7 @@ const CACHE_DURATION = 15 * 1000; // 15 seconds in milliseconds
 
 // Balance cache for user balances
 const userBalanceCache = new Map();
-const USER_BALANCE_CACHE_DURATION = 10 * 1000; // 30 seconds in milliseconds
+const USER_BALANCE_CACHE_DURATION = 3 * 1000; // 30 seconds in milliseconds
 
 const getCachedBalance = (address) => {
   const cached = balanceCache.get(address);
