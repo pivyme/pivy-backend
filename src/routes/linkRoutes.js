@@ -173,17 +173,26 @@ export const linkRoutes = (app, _, done) => {
           ? `pivy.me/${link.user.username}`
           : `pivy.me/${link.user.username}/${link.tag}`;
 
+        const isPersonalLink = link.tag === "" && link.label === "personal"
+
         return {
           ...link,
           linkPreview,
           // Amount is already in human readable format
           amount: link.amount,
+          isPersonalLink,
           // Add chain amount if fixed amount type
           chainAmount: link.amount && link.mint ? 
             BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
             null
         };
       });
+
+      // Make the personal link the first item in the array
+      const personalLink = linkObjects.find(link => link.isPersonalLink);
+      if (personalLink) {
+        linkObjects.splice(0, 0, personalLink);
+      }
 
       return reply.status(200).send(linkObjects);
     } catch (error) {
@@ -224,6 +233,223 @@ export const linkRoutes = (app, _, done) => {
       console.log('Error fetching file', error);
       return reply.status(500).send({
         message: "Error fetching file",
+        error: error.message,
+        data: null
+      });
+    }
+  });
+
+  app.post('/update-link/:linkId', {
+    preHandler: [authMiddleware],
+  }, async (request, reply) => {
+    try {
+      const { chain = 'DEVNET' } = request.query;
+      const { linkId } = request.params;
+
+      // Extract data from request.body
+      const data = {
+        type: request.body.type?.value,
+        name: request.body.name?.value,
+        slug: request.body.slug?.value,
+        amountType: request.body.amountType?.value,
+        description: request.body.description?.value,
+        emoji: request.body.emoji?.value,
+        backgroundColor: request.body.backgroundColor?.value,
+        specialTheme: request.body.specialTheme?.value || 'default',
+      };
+
+      // Handle file if present
+      let fileData = null;
+      if (request.body.file && request.body.file.type === 'file') {
+        fileData = {
+          filename: request.body.file.filename,
+          mimetype: request.body.file.mimetype,
+          buffer: await request.body.file.toBuffer()
+        };
+      }
+
+      // First check if the link exists and belongs to the user
+      const existingLink = await prismaQuery.link.findUnique({
+        where: { id: linkId },
+        include: { file: true }
+      });
+
+      if (!existingLink) {
+        return reply.status(404).send({
+          message: "Link not found",
+          error: "The specified link does not exist",
+          data: null
+        });
+      }
+
+      if (existingLink.userId !== request.user.id) {
+        return reply.status(403).send({
+          message: "Unauthorized",
+          error: "You don't have permission to update this link",
+          data: null
+        });
+      }
+
+      // Base link data for update
+      const updateData = {
+        label: data.name,
+        tag: data.slug,
+        emoji: data.emoji,
+        backgroundColor: data.backgroundColor,
+        description: data.description,
+        specialTheme: data.specialTheme,
+      };
+
+      // Handle token info if needed
+      if (data.amountType === 'fixed') {
+        const token = JSON.parse(request.body.token.value);
+        const tokenInfo = await getOrCreateTokenInfo(chain, token);
+        updateData.amountType = 'FIXED';
+        updateData.amount = Number(request.body.amount.value);
+        updateData.mintId = tokenInfo.id;
+      } else if (data.amountType === 'open') {
+        updateData.amountType = 'OPEN';
+        updateData.amount = null;
+        updateData.mintId = null;
+      }
+
+      let updatedLink;
+
+      // Update the link with file if it's a download type
+      if (existingLink.type === 'DOWNLOAD' && fileData) {
+        // Delete existing file if present
+        if (existingLink.file) {
+          await prismaQuery.file.delete({
+            where: { id: existingLink.file.id }
+          });
+        }
+
+        updatedLink = await prismaQuery.link.update({
+          where: { id: linkId },
+          data: {
+            ...updateData,
+            file: {
+              create: {
+                filename: fileData.filename,
+                mimetype: fileData.mimetype,
+                size: fileData.buffer.length,
+                data: fileData.buffer
+              }
+            }
+          },
+          include: {
+            file: true,
+            mint: true
+          }
+        });
+      } else {
+        updatedLink = await prismaQuery.link.update({
+          where: { id: linkId },
+          data: updateData,
+          include: {
+            mint: true
+          }
+        });
+      }
+
+      // Remove the file buffer from the response
+      if (updatedLink.file) {
+        updatedLink.file = {
+          ...updatedLink.file,
+          data: undefined
+        };
+      }
+
+      // Format the response to include both UI and chain amounts
+      const responseLink = {
+        ...updatedLink,
+        amount: updatedLink.amount,
+        chainAmount: updatedLink.amount && updatedLink.mint ? 
+          BigInt(updatedLink.amount * (10 ** updatedLink.mint.decimals)).toString() : 
+          null
+      };
+
+      return reply.status(200).send({
+        message: "Link updated successfully",
+        data: responseLink
+      });
+    } catch (error) {
+      console.error('Error updating link:', error);
+
+      if (error.code === 'FST_REQ_FILE_TOO_LARGE') {
+        return reply.status(413).send({
+          message: "File size too large",
+          error: "Maximum file size is 5MB",
+          data: null
+        });
+      }
+
+      return reply.status(500).send({
+        message: "Error updating link",
+        error: error.message,
+        data: null
+      });
+    }
+  });
+
+  app.delete('/delete-link/:linkId', {
+    preHandler: [authMiddleware],
+  }, async (request, reply) => {
+    try {
+      const { linkId } = request.params;
+
+      // First check if the link exists and belongs to the user
+      const existingLink = await prismaQuery.link.findUnique({
+        where: { id: linkId },
+        include: { file: true }
+      });
+
+      if (!existingLink) {
+        return reply.status(404).send({
+          message: "Link not found",
+          error: "The specified link does not exist",
+          data: null
+        });
+      }
+
+      // Check if it's a personal link (which cannot be deleted)
+      const isPersonalLink = existingLink.tag === "" && existingLink.label === "personal";
+      if (isPersonalLink) {
+        return reply.status(403).send({
+          message: "Cannot delete personal link",
+          error: "Personal links cannot be deleted",
+          data: null
+        });
+      }
+
+      if (existingLink.userId !== request.user.id) {
+        return reply.status(403).send({
+          message: "Unauthorized",
+          error: "You don't have permission to delete this link",
+          data: null
+        });
+      }
+
+      // If there's an associated file, delete it first
+      if (existingLink.file) {
+        await prismaQuery.file.delete({
+          where: { id: existingLink.file.id }
+        });
+      }
+
+      // Delete the link
+      await prismaQuery.link.delete({
+        where: { id: linkId }
+      });
+
+      return reply.status(200).send({
+        message: "Link deleted successfully",
+        data: null
+      });
+    } catch (error) {
+      console.error('Error deleting link:', error);
+      return reply.status(500).send({
+        message: "Error deleting link",
         error: error.message,
         data: null
       });
