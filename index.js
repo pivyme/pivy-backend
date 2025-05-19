@@ -67,8 +67,8 @@ fastify.register(cctpRoutes, {
 })
 
 /* --------------------------------- Workers -------------------------------- */
-// fastify.register(stealthWorkers)
-// fastify.register(tokenWorker)
+fastify.register(stealthWorkers)
+fastify.register(tokenWorker)
 
 const start = async () => {
   try {
