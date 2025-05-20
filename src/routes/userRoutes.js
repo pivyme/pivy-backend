@@ -37,13 +37,13 @@ const getCachedUserBalance = (userId, chain) => {
   const key = `${userId}-${chain}`;
   const cached = userBalanceCache.get(key);
   if (!cached) return null;
-  
+
   // Check if cache has expired
   if (Date.now() - cached.timestamp > USER_BALANCE_CACHE_DURATION) {
     userBalanceCache.delete(key);
     return null;
   }
-  
+
   return cached.data;
 };
 
@@ -85,19 +85,19 @@ async function formatBalances(balances, chain, addressToEphemeralMap) {
   const formatAmount = (amount, decimals) => {
     // Convert to string and split at decimal point
     const [whole, fraction = ""] = amount.toString().split(".");
-    
+
     // If no decimal part, return as is
     if (!fraction) return amount;
 
     // Truncate to max decimals
     const truncated = fraction.slice(0, decimals);
-    
+
     // Remove trailing zeros
     const cleaned = truncated.replace(/0+$/, "");
-    
+
     // If only zeros after decimal, return whole number
     if (!cleaned) return Number(whole);
-    
+
     // Combine whole and truncated fraction
     return Number(`${whole}.${cleaned}`);
   };
@@ -167,7 +167,7 @@ async function formatBalances(balances, chain, addressToEphemeralMap) {
 
       // Find existing token entry or create new one
       let tokenEntry = result.spl.find(t => t.mintAddress === token.tokenAddress);
-      
+
       if (!tokenEntry) {
         tokenEntry = {
           mintAddress: tokenInfo.mintAddress,
@@ -510,7 +510,7 @@ export const userRoutes = (app, _, done) => {
             total: "0"
           };
         }
-        
+
         // Add the amounts (they are strings, so we need to convert to BigInt)
         const currentTotal = BigInt(acc[withdrawal.txHash].tokens[tokenKey].total);
         const newAmount = BigInt(withdrawal.amount);
@@ -635,7 +635,7 @@ export const userRoutes = (app, _, done) => {
 
       // Get all token mint addresses from balances
       const tokenMints = formattedBalances.spl.map(t => t.mintAddress);
-      
+
       // Get all token prices from mintDataCache
       const tokenPrices = await prismaQuery.mintDataCache.findMany({
         where: {
@@ -661,6 +661,9 @@ export const userRoutes = (app, _, done) => {
         ...token,
         usdValue: token.total * (priceMap.get(token.mintAddress) ?? 0)
       }));
+
+      // Remove the tokens that have total less than 0.00001
+      formattedBalances.spl = formattedBalances.spl.filter(token => token.total > 0.00001);
 
       // Cache the formatted balances
       setCachedUserBalance(request.user.id, chain, formattedBalances);
