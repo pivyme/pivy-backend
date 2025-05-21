@@ -1,5 +1,5 @@
-import { deriveStealthKeypair, deriveStealthPubFromPriv } from "../../lib/pivy-stealth/pivy-stealth.js"
-import { prismaQuery } from "../../lib/prisma.js"
+import { deriveStealthKeypair, deriveStealthPubFromPriv } from "../../../lib/pivy-stealth/pivy-stealth.js"
+import { prismaQuery } from "../../../lib/prisma.js"
 import cron from "node-cron"
 export const processPaymentTx = async ({
   txHash,

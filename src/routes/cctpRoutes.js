@@ -23,7 +23,7 @@ import { CHAINS } from '../config.js';
 import { validateRequiredFields } from '../utils/validationUtils.js';
 import { prismaQuery } from '../lib/prisma.js';
 import { getOrCreateTokenCache } from '../utils/solanaUtils.js';
-import { processPaymentTx } from '../workers/helpers/activityHelpers.js';
+import { processPaymentTx } from '../workers/solana/helpers/activityHelpers.js';
 
 const { Program, AnchorProvider, setProvider } = anchor;
 const { BN } = anchor.default;
@@ -519,8 +519,7 @@ export const cctpRoutes = (app, _, done) => {
         const tokenCache = await getOrCreateTokenCache(
           usdcMint.toBase58(),
           chainConfig.id,
-          connection,
-          prismaQuery
+          connection
         );
 
         // Create Payment entry (ignore if already exists)

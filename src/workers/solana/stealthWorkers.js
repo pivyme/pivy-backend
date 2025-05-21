@@ -1,10 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
-import { CHAINS } from "../config.js";
-import { PIVY_STEALTH_IDL } from "../lib/pivy-stealth/IDL.js";
-import { prismaQuery } from "../lib/prisma.js";
+import { CHAINS } from "../../config.js";
+import { PIVY_STEALTH_IDL } from "../../lib/pivy-stealth/IDL.js";
+import { prismaQuery } from "../../lib/prisma.js";
 import { processPaymentTx, processWithdrawalTx } from "./helpers/activityHelpers.js";
-import { getOrCreateTokenCache } from "../utils/solanaUtils.js";
+import { getOrCreateTokenCache } from "../../utils/solanaUtils.js";
 import cron from "node-cron";
 
 const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -189,8 +189,7 @@ export const stealthWorkers = (app, _, done) => {
           tokenCache = await getOrCreateTokenCache(
             result.data.mint,
             chain.id,
-            connection,
-            prismaQuery
+            connection
           );
         }
 

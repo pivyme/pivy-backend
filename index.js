@@ -1,16 +1,18 @@
 import "./dotenv.js";
 
-import Fastify from "fastify";
 import FastifyCors from "@fastify/cors";
 import FastifyMultipart from "@fastify/multipart";
-import { stealthWorkers } from "./src/workers/stealthWorkers.js";
-import { authRoutes } from './src/routes/authRoutes.js';
-import { userRoutes } from "./src/routes/userRoutes.js";
+import Fastify from "fastify";
 import { addressRoutes } from "./src/routes/addressRoutes.js";
-import { linkRoutes } from "./src/routes/linkRoutes.js";
-import { stealthListener } from "./src/workers/stealthListener.js";
+import { authRoutes } from './src/routes/authRoutes.js';
 import { cctpRoutes } from "./src/routes/cctpRoutes.js";
-import { tokenWorker } from "./src/workers/tokenWorkers.js";
+import { linkRoutes } from "./src/routes/linkRoutes.js";
+import { userRoutes } from "./src/routes/userRoutes.js";
+
+import { stealthWorkers } from "./src/workers/solana/stealthWorkers.js";
+import { tokenWorker } from "./src/workers/solana/tokenWorkers.js";
+import { suiStealthWorkers } from "./src/workers/sui/suiStealthWorkers.js";
+import { suiTokenWorker } from "./src/workers/sui/suiTokenWorkers.js";
 
 console.log(
   "======================\n======================\nMY BACKEND SYSTEM STARTED!\n======================\n======================\n"
@@ -67,8 +69,12 @@ fastify.register(cctpRoutes, {
 })
 
 /* --------------------------------- Workers -------------------------------- */
-fastify.register(stealthWorkers)
-fastify.register(tokenWorker)
+if (process.env.WORKERS_ENABLED === "true") {
+  // fastify.register(stealthWorkers)
+  // fastify.register(tokenWorker)
+  // fastify.register(suiStealthWorkers)
+}
+fastify.register(suiTokenWorker)
 
 const start = async () => {
   try {

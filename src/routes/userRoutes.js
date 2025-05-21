@@ -4,6 +4,9 @@ import { prismaQuery } from "../lib/prisma.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { TOKEN_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/utils/token.js";
 import { getTokenInfo, getWalletsTokensHolding } from "../utils/solanaUtils.js";
+import { getSolanaPortfolio } from "../helpers/solana/solanaHelpers.js";
+import { SuiClient } from "@mysten/sui/client";
+import { getSuiPortfolio } from "../helpers/sui/suiHelpers.js";
 
 // Simple in-memory cache implementation
 const balanceCache = new Map();
@@ -286,6 +289,8 @@ export const userRoutes = (app, _, done) => {
   app.get("/balance/:address", async (req, reply) => {
     try {
       const { address } = req.params;
+      const chainQuery = req.query.chain;
+      console.log('chainQuery', chainQuery)
 
       if (!address) {
         return reply.code(400).send({
@@ -293,130 +298,44 @@ export const userRoutes = (app, _, done) => {
         });
       }
 
+      const chain = CHAINS[chainQuery]
+      if (!chain?.id) {
+        return reply.code(400).send({
+          message: "Invalid chain",
+        });
+      }
+
+      const requestKey = `${address}_${chain.id}`
+
       // Check cache first
-      const cachedBalance = getCachedBalance(address);
+      const cachedBalance = getCachedBalance(requestKey);
       if (cachedBalance) {
         return reply.code(200).send(cachedBalance);
       }
 
-      const chain = CHAINS[process.env.CHAIN]
-
-      const connection = new Connection(chain.rpcUrl, "confirmed");
-      const publicKey = new PublicKey(address);
-
-      // Fetch all token accounts by owner
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        publicKey,
-        {
-          programId: TOKEN_PROGRAM_ID
-        }
-      );
-
-      const fetchMintData = async (mintAddress, tokenAccountData) => {
-        let existingCache = await prismaQuery.mintDataCache.findUnique({
-          where: {
-            mintAddress_chain: {
-              mintAddress: mintAddress,
-              chain: chain.id
-            }
-          },
-        });
-
-        if (existingCache) {
-          return existingCache;
-        }
-
+      // Solana
+      if (chain.id === "MAINNET" || chain.id === "DEVNET") {
         const connection = new Connection(chain.rpcUrl, "confirmed");
-        const tokenInfo = await getTokenInfo(
-          mintAddress,
-          connection
-        )
+        const portfolioInfo = await getSolanaPortfolio(address, chain.id, connection);
 
-        // Create fallback data using the mint address
-        const shortAddr = mintAddress.slice(0, 5).toUpperCase();
-        const fallbackData = {
-          mintAddress: mintAddress,
-          chain: chain.id,
-          name: 'Unknown Token',
-          symbol: shortAddr,
-          decimals: tokenAccountData.tokenAmount.decimals,
-          imageUrl: null,
-          description: `Token at address ${mintAddress}`,
-          uriData: {},
-          isInvalid: false
-        };
+        // Cache the result before sending
+        setCachedBalance(requestKey, portfolioInfo);
 
-        if (!tokenInfo) {
-          existingCache = await prismaQuery.mintDataCache.create({
-            data: fallbackData
-          })
+        return reply.code(200).send(portfolioInfo);
+      }
 
-          return existingCache;
-        }
-
-        existingCache = await prismaQuery.mintDataCache.create({
-          data: {
-            mintAddress: mintAddress,
-            chain: chain.id,
-            name: tokenInfo.name || fallbackData.name,
-            symbol: tokenInfo.symbol || fallbackData.symbol,
-            decimals: tokenInfo.decimals || tokenAccountData.tokenAmount.decimals,
-            imageUrl: tokenInfo.image || fallbackData.imageUrl,
-            description: tokenInfo.description || fallbackData.description,
-            uriData: tokenInfo.uriData || fallbackData.uriData,
-          }
+      // Sui
+      if (chain.id === "SUI_MAINNET" || chain.id === "SUI_TESTNET") {
+        const suiClient = new SuiClient({
+          url: chain.rpcUrl
         })
+        const portfolioInfo = await getSuiPortfolio(address, chain.id, suiClient)
+        console.log('portfolioInfo', portfolioInfo)
 
-        return existingCache;
-      };
+        setCachedBalance(requestKey, portfolioInfo)
 
-      // Create an empty array to store the portfolio data
-      const portfolioData = [];
-
-      for (let i = 0; i < tokenAccounts.value.length; i++) {
-        const accountInfo = tokenAccounts.value[i];
-        const accountData = accountInfo.account.data.parsed.info;
-
-        const mint = accountData.mint;
-
-        // Fetch mint data asynchronously
-        const mintData = await fetchMintData(mint, accountData);
-
-        // Push the processed data into the portfolioData array
-        portfolioData.push({
-          mint: accountData.mint,
-          owner: accountData.owner,
-          tokenAmount: accountData.tokenAmount.uiAmount,
-          token: {
-            name: mintData.name,
-            symbol: mintData.symbol,
-            decimals: accountData.tokenAmount.decimals,
-            imageUrl: mintData.imageUrl,
-            description: mintData.description,
-          }
-        });
+        return reply.code(200).send(portfolioInfo);
       }
-
-      // Get Native SOL balance
-      const balance = await connection.getBalance(publicKey)
-      const nativeBalance = {
-        name: "SOL",
-        symbol: "SOL",
-        decimals: 9,
-        imageUrl: 'https://assets.coingecko.com/coins/images/4128/standard/solana.png?1718769756',
-        amount: balance / LAMPORTS_PER_SOL,
-      }
-
-      const portfolioInfo = {
-        nativeBalance: nativeBalance,
-        splBalance: portfolioData,
-      };
-
-      // Cache the result before sending
-      setCachedBalance(address, portfolioInfo);
-
-      return reply.code(200).send(portfolioInfo);
-
     } catch (error) {
       console.log("Error getting portfolio info: ", error)
       return reply.code(500).send({

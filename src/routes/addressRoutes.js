@@ -73,7 +73,8 @@ export const addressRoutes = (app, _, done) => {
         tag: link.tag,
         metaSpendPub: metaSpendPub,
         metaViewPub: metaViewPub,
-        linkData: linkData
+        linkData: linkData,
+        sourceChain: user.walletChain
       }
 
       return reply.status(200).send(data);

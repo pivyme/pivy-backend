@@ -5,6 +5,7 @@ import { getIPFSData } from './ipfsUtils.js';
 import BN from 'bn.js';
 import { sleep } from './miscUtils.js';
 import axios from 'axios';
+import { prismaQuery } from '../lib/prisma.js';
 
 /**
  * Get the token info
@@ -71,10 +72,10 @@ export const getTokenInfo = async (mintAddress, connection) => {
  * @param {Connection} connection - The Solana connection object
  * @returns {Promise<Object>} The cached token data
  */
-export const getOrCreateTokenCache = async (mintAddress, chain, connection, prisma) => {
+export const getOrCreateTokenCache = async (mintAddress, chain, connection) => {
   try {
     // Check if token exists in cache
-    const existingCache = await prisma.mintDataCache.findUnique({
+    const existingCache = await prismaQuery.mintDataCache.findUnique({
       where: {
         mintAddress_chain: {
           mintAddress: mintAddress,
@@ -123,7 +124,7 @@ export const getOrCreateTokenCache = async (mintAddress, chain, connection, pris
     };
 
     // Upsert the cache entry
-    return await prisma.mintDataCache.upsert({
+    return await prismaQuery.mintDataCache.upsert({
       where: {
         mintAddress_chain: {
           mintAddress: mintAddress,
