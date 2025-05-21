@@ -31,6 +31,29 @@ function to32u8(raw) {
   throw new Error('unsupported key format');
 }
 
+export async function decryptEphemeralPrivKey(encodedPayload, metaViewPriv, ephPub) {
+  const payload = bs58.decode(encodedPayload);
+  const encrypted = payload.slice(24); // first 24 bytes = nonce (ignored)
+
+  const shared = await ed.getSharedSecret(
+    to32u8(metaViewPriv),
+    to32u8(ephPub),
+  );
+  const keyBytes = sha256(shared);
+
+  const dec = new Uint8Array(encrypted.length);
+  for (let i = 0; i < encrypted.length; i++) dec[i] = encrypted[i] ^ keyBytes[i % 32];
+
+  const ephPriv32 = dec.slice(0, 32);
+  const receivedPub = dec.slice(32);
+  const computedPub = await ed.getPublicKey(ephPriv32);
+  if (!computedPub.every((b, i) => b === receivedPub[i]))
+    throw new Error('Decryption failed – ephPub mismatch');
+
+  return ephPriv32;
+}
+
+
 /** RFC-5564-style stealth key derivation (identical to test script) */
 export async function deriveStealthKeypair(
   metaSpend,          // 32-B private scalar of spend key

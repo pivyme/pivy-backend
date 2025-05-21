@@ -7,6 +7,7 @@ import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { WALLET_CHAINS } from "../config.js";
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { verifyPersonalMessageSignature } from '@mysten/sui/verify';
+import { getPrivBytes, getPubBytes } from "../lib/pivy-stealth/pivy-stealth-sui.js";
 
 /**
  *
@@ -125,16 +126,27 @@ export const authRoutes = (app, _, done) => {
 
           // If user not found, create a new user
           if (!user) {
-            const spendKey = Ed25519Keypair.generate();
-            const viewKey = Ed25519Keypair.generate();
+            const metaSpendKp = Ed25519Keypair.generate();
+            const metaViewKp = Ed25519Keypair.generate();
+
+            const metaSpendPriv = getPrivBytes(metaSpendKp);
+            const metaViewPriv = getPrivBytes(metaViewKp);
+
+            console.log({
+              metaSpendPriv,
+              metaViewPriv
+            })
+
+            const metaSpendPub = bs58.encode(getPubBytes(metaSpendKp));
+            const metaViewPub = bs58.encode(getPubBytes(metaViewKp));
 
             user = await prismaQuery.user.create({
               data: {
                 walletAddress: publicKey,
-                metaSpendPriv: Buffer.from(spendKey.getSecretKey().slice(0, 32)).toString("hex"),
-                metaViewPriv: Buffer.from(viewKey.getSecretKey().slice(0, 32)).toString("hex"),
-                metaSpendPub: spendKey.getPublicKey().toSuiAddress(),
-                metaViewPub: viewKey.getPublicKey().toSuiAddress(),
+                metaSpendPriv: Buffer.from(metaSpendPriv).toString("hex"),
+                metaViewPriv: Buffer.from(metaViewPriv).toString("hex"),
+                metaSpendPub: metaSpendPub,
+                metaViewPub: metaViewPub,
                 walletChain: WALLET_CHAINS.SUI.id,
                 links: {
                   create: {

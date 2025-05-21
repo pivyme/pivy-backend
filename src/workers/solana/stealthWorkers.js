@@ -193,7 +193,11 @@ export const stealthWorkers = (app, _, done) => {
           );
         }
 
-        const users = await prismaQuery.user.findMany({})
+        const users = await prismaQuery.user.findMany({
+          where: {
+            walletChain: 'SOLANA'
+          }
+        })
 
         if (result.type === 'IN') {
           if (result.data.announce === true) {

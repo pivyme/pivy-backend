@@ -13,8 +13,6 @@ export const getSuiPortfolio = async (address, chainId, suiClient) => {
     owner: address
   })
 
-  console.log('balances', balances)
-
   // Initialize native balance with default values
   let nativeBalance = {
     mint: "0x2::sui::SUI",
@@ -28,7 +26,6 @@ export const getSuiPortfolio = async (address, chainId, suiClient) => {
   let tokenBalance = []
   for (const balance of balances) {
     const tokenInfo = await getOrCreateSuiTokenCache(balance.coinType, chainId)
-    console.log('tokenInfo', tokenInfo)
 
     const uiAmount = parseFloat(formatUnits(balance.totalBalance, tokenInfo.decimals))
 
@@ -52,8 +49,6 @@ export const getSuiPortfolio = async (address, chainId, suiClient) => {
       }
     })
   }
-
-  console.log('Portfolio data:', { nativeBalance, tokenBalance })
 
   return {
     nativeBalance,

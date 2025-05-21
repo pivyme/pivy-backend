@@ -54,8 +54,6 @@ export const addressRoutes = (app, _, done) => {
       }
 
       // expose ONLY the public pieces
-      const spendScalar = Buffer.from(user.metaSpendPriv, "hex");
-      const viewScalar = Buffer.from(user.metaViewPriv, "hex");
       const metaSpendPub = user.metaSpendPub
       const metaViewPub = user.metaViewPub
 
@@ -74,7 +72,8 @@ export const addressRoutes = (app, _, done) => {
         metaSpendPub: metaSpendPub,
         metaViewPub: metaViewPub,
         linkData: linkData,
-        sourceChain: user.walletChain
+        sourceChain: user.walletChain,
+        s: user.walletChain === "SUI" ? user.metaSpendPriv : undefined
       }
 
       return reply.status(200).send(data);

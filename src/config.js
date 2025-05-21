@@ -27,6 +27,8 @@ export const CHAINS = {
   },
 }
 
+export const NATIVE_SUI_MINT = '0x2::sui::SUI';
+
 export const isTestnet = process.env.CHAIN === 'DEVNET';
 
 export const WALLET_CHAINS = {
