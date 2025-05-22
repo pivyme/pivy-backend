@@ -102,20 +102,16 @@ export const suiStealthWorkers = (app, _, done) => {
         if (existingPayment) continue;
 
         const eventType = tx.events[0].type;
-        console.log('eventType: ', eventType)
+        // console.log('eventType: ', eventType)
 
         // console.log('tx: ', JSON.stringify(tx))
 
         if (eventType.includes('PaymentEvent')) {
           const eventData = tx.events[0].parsedJson;
-          console.log('eventData: ', eventData)
 
           // convert ephemeral pubkey from bytes to base58
           const ephPubBytes = Buffer.from(eventData.eph_pubkey);
           const ephPubkey = Buffer.from(ephPubBytes.filter(byte => byte !== 0)).toString('utf8');
-
-          console.log('ephPubkey: ', ephPubkey)
-          console.log('timestamp: ', tx.timestampMs)
 
           // convert label from bytes to string (remove padding and convert)
           const labelBytes = Buffer.from(eventData.label);
@@ -146,7 +142,6 @@ export const suiStealthWorkers = (app, _, done) => {
           })
         } else if (eventType.includes('WithdrawEvent')) {
           const eventData = tx.events[0].parsedJson;
-          console.log('eventData: ', eventData)
 
           const mint = eventType.match(/<(.+?)>/)[1];
 
@@ -164,9 +159,7 @@ export const suiStealthWorkers = (app, _, done) => {
           })
         }
       }
-      console.log('results: ', results)
 
-      console.log('Sui Stealth Program event results: ', results)
       if (results.length === 0) {
         console.log('No new stealth transactions found');
         return;
@@ -193,11 +186,6 @@ export const suiStealthWorkers = (app, _, done) => {
         })
 
         if (result.type === 'IN') {
-          if (result.data.announce === true) {
-            // Skip announcement payments
-            continue;
-          }
-
           const newPayment = await prismaQuery.payment.create({
             data: {
               txHash: result.signature,
@@ -222,7 +210,7 @@ export const suiStealthWorkers = (app, _, done) => {
           });
 
           await processSuiPaymentTx({
-            txHash: result.signature,
+            txHash: newPayment.txHash,
             users: users
           })
         } else if (result.type === 'OUT') {
