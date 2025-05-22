@@ -65,7 +65,7 @@ export const addressRoutes = (app, _, done) => {
           BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
           null
       };
-
+      
       const data = {
         username: user.username,
         tag: link.tag,

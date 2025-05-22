@@ -70,11 +70,10 @@ fastify.register(cctpRoutes, {
 
 /* --------------------------------- Workers -------------------------------- */
 if (process.env.WORKERS_ENABLED === "true") {
-  // fastify.register(stealthWorkers)
-  // fastify.register(tokenWorker)
+  fastify.register(stealthWorkers)
+  fastify.register(tokenWorker)
   fastify.register(suiStealthWorkers)
 }
-// fastify.register(suiTokenWorker)
 
 const start = async () => {
   try {

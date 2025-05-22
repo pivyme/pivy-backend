@@ -83,7 +83,7 @@ export const suiStealthWorkers = (app, _, done) => {
           showEvents: true,
           showInput: true,
         },
-        limit: 1,
+        limit: 8,
         descending: true,
       })
 

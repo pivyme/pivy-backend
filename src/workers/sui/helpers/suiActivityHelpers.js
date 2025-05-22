@@ -220,7 +220,3 @@ export const processSuiWithdrawalTx = async ({
     });
   }
 }
-
-processSuiWithdrawalTx({
-  txHash: 'DpGwimMu2kUYGQJErHuHzv2JVYynf1JcphaWgFB68cue'
-})
