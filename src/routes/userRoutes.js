@@ -319,6 +319,81 @@ export const userRoutes = (app, _, done) => {
       const allActivities = [...paymentActivities, ...withdrawalActivities]
         .sort((a, b) => b.timestamp - a.timestamp);
 
+      if (chain.id === "SUI_MAINNET" || chain.id === "SUI_TESTNET") {
+        const withdrawalGroups = await prismaQuery.suiWithdrawalGroup.findMany({
+          where: {
+            userId: request.user.id
+          }
+        });
+
+        // Create a map of txHash to withdrawal group
+        const txHashToGroupMap = new Map();
+        const groupedWithdrawals = new Map(); // Track grouped withdrawals
+        withdrawalGroups.forEach(group => {
+          group.txHashes.forEach(txHash => {
+            txHashToGroupMap.set(txHash, group);
+          });
+        });
+
+        // First pass: Group withdrawals and sum their amounts
+        allActivities.forEach(activity => {
+          if (activity.type === 'WITHDRAWAL') {
+            const group = txHashToGroupMap.get(activity.id);
+            if (group) {
+              if (!groupedWithdrawals.has(group.id)) {
+                // Create new grouped withdrawal
+                groupedWithdrawals.set(group.id, {
+                  ...activity,
+                  id: group.id,
+                  withdrawalId: group.id,
+                  amount: activity.amount,
+                  tokens: { ...activity.tokens }
+                });
+              } else {
+                // Update existing grouped withdrawal
+                const existing = groupedWithdrawals.get(group.id);
+                const newAmount = BigInt(existing.amount) + BigInt(activity.amount);
+                existing.amount = newAmount.toString();
+                
+                // Update tokens if they exist
+                if (activity.tokens && existing.tokens) {
+                  Object.entries(activity.tokens).forEach(([symbol, tokenInfo]) => {
+                    if (!existing.tokens[symbol]) {
+                      existing.tokens[symbol] = { ...tokenInfo };
+                    } else {
+                      const newTotal = BigInt(existing.tokens[symbol].total) + BigInt(tokenInfo.total);
+                      existing.tokens[symbol].total = newTotal.toString();
+                    }
+                  });
+                }
+              }
+            }
+          }
+        });
+
+        // Second pass: Create final activities array
+        const groupedActivities = allActivities.reduce((acc, activity) => {
+          if (activity.type === 'WITHDRAWAL') {
+            const group = txHashToGroupMap.get(activity.id);
+            if (group) {
+              // Only add the grouped withdrawal if we haven't added it yet
+              if (!acc.some(a => a.withdrawalId === group.id)) {
+                acc.push(groupedWithdrawals.get(group.id));
+              }
+            } else {
+              // Add ungrouped withdrawal as is
+              acc.push(activity);
+            }
+          } else {
+            // Add non-withdrawal activity as is
+            acc.push(activity);
+          }
+          return acc;
+        }, []);
+
+        return reply.send(groupedActivities);
+      }
+
       return reply.send(allActivities);
     } catch (error) {
       console.error('Error fetching activities:', error);
@@ -474,6 +549,32 @@ export const userRoutes = (app, _, done) => {
     }
   })
 
-  done();
+  app.post('/sui/withdrawal-group', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    try {
+      const { withdrawalId } = request.body;
+      const { chain } = request.query;
 
+      const txHashes = withdrawalId.split('|')
+      console.log('txHashes', txHashes)
+      const withdrawalGroup = await prismaQuery.suiWithdrawalGroup.create({
+        data: {
+          id: withdrawalId,
+          txHashes: txHashes,
+          chain: chain,
+          userId: request.user.id
+        }
+      })
+
+      return reply.send(withdrawalGroup)
+    } catch (error) {
+      console.error('Error creating withdrawal group:', error);
+      return reply.status(500).send({
+        error: 'Failed to create withdrawal group'
+      });
+    }
+  })
+
+  done();
 }

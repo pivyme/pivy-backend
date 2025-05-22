@@ -4,7 +4,7 @@ import { prismaQuery } from "../../lib/prisma.js";
 import bs58 from 'bs58';
 import { getOrCreateSuiTokenCache } from "../../utils/suiUtils.js";
 import { processPaymentTx } from "../solana/helpers/activityHelpers.js";
-import { processSuiPaymentTx } from "./helpers/suiActivityHelpers.js";
+import { processSuiPaymentTx, processSuiWithdrawalTx } from "./helpers/suiActivityHelpers.js";
 import cron from "node-cron";
 
 const getOrCreateNativeSUICache = async (chainId) => {
@@ -83,7 +83,7 @@ export const suiStealthWorkers = (app, _, done) => {
           showEvents: true,
           showInput: true,
         },
-        limit: 5,
+        limit: 1,
         descending: true,
       })
 
@@ -102,7 +102,7 @@ export const suiStealthWorkers = (app, _, done) => {
         if (existingPayment) continue;
 
         const eventType = tx.events[0].type;
-        // console.log('eventType: ', eventType)
+        console.log('eventType: ', eventType)
 
         // console.log('tx: ', JSON.stringify(tx))
 
@@ -144,11 +144,27 @@ export const suiStealthWorkers = (app, _, done) => {
               memo: payload,
             }
           })
-        } else if (eventType.includes('WithdrawalEvent')) {
+        } else if (eventType.includes('WithdrawEvent')) {
           const eventData = tx.events[0].parsedJson;
           console.log('eventData: ', eventData)
+
+          const mint = eventType.match(/<(.+?)>/)[1];
+
+          results.push({
+            signature: tx.digest,
+            slot: parseInt(tx.checkpoint),
+            type: 'OUT',
+            data: {
+              stealthOwner: eventData.stealth_owner,
+              destination: eventData.destination,
+              mint: mint,
+              amount: eventData.amount,
+              timestamp: parseInt(parseInt(tx.timestampMs) / 1000),
+            }
+          })
         }
       }
+      console.log('results: ', results)
 
       console.log('Sui Stealth Program event results: ', results)
       if (results.length === 0) {
@@ -211,7 +227,47 @@ export const suiStealthWorkers = (app, _, done) => {
           })
         } else if (result.type === 'OUT') {
           // Check if withdrawal already exists
+          const existingWithdrawal = await prismaQuery.withdrawal.findUnique({
+            where: {
+              txHash_stealthOwnerPubkey: {
+                txHash: result.signature,
+                stealthOwnerPubkey: result.data.stealthOwner
+              }
+            }
+          });
 
+          if (existingWithdrawal) {
+            console.log('Withdrawal already exists:', {
+              txHash: result.signature,
+              stealthOwnerPubkey: result.data.stealthOwner
+            });
+            continue;
+          }
+
+          const newWithdrawal = await prismaQuery.withdrawal.create({
+            data: {
+              txHash: result.signature,
+              slot: result.slot,
+              timestamp: result.data.timestamp,
+              stealthOwnerPubkey: result.data.stealthOwner,
+              destinationPubkey: result.data.destination,
+              amount: result.data.amount,
+              chain: chain.id,
+              mint: {
+                connect: {
+                  id: tokenCache.id
+                }
+              }
+            }
+          }).catch(err => {
+            console.log('Error creating withdrawal: ', err)
+          });
+
+          if (newWithdrawal) {
+            await processSuiWithdrawalTx({
+              txHash: newWithdrawal.txHash
+            });
+          }
         }
       }
 
@@ -223,7 +279,7 @@ export const suiStealthWorkers = (app, _, done) => {
   handleFetchStealthTransactions();
 
   // Every 5 seconds
-  cron.schedule('*/30 * * * * *', () => {
+  cron.schedule('*/5 * * * * *', () => {
     handleFetchStealthTransactions()
   })
 

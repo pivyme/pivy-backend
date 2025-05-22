@@ -38,6 +38,7 @@ model User {
 
   links Link[]
   withdrawals Withdrawal[]
+  withdrawalGroups SuiWithdrawalGroup[]
 
   walletChain WalletChain @default(SOLANA)
 
@@ -192,6 +193,19 @@ model MainPrice {
   id       String @id @default(cuid())
   symbol   String @unique
   priceUsd Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SuiWithdrawalGroup {
+  id String @id
+
+  txHashes String[]
+  chain Chain
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
