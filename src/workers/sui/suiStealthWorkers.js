@@ -225,10 +225,6 @@ export const suiStealthWorkers = (app, _, done) => {
           });
 
           if (existingWithdrawal) {
-            console.log('Withdrawal already exists:', {
-              txHash: result.signature,
-              stealthOwnerPubkey: result.data.stealthOwner
-            });
             continue;
           }
 

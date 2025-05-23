@@ -220,3 +220,20 @@ export const processSuiWithdrawalTx = async ({
     });
   }
 }
+
+export const processSuiPaymentActivities = async () => {
+  const unprocessedPayments = await prismaQuery.payment.findMany({
+    where: {
+      linkId: null
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+  })
+
+  for (const payment of unprocessedPayments) {
+    await processSuiPaymentTx({ txHash: payment.txHash })
+  }
+}
+
+// processSuiPaymentActivities()

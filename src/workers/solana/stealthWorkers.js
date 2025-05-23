@@ -95,7 +95,6 @@ export const stealthWorkers = (app, _, done) => {
           until: lastProcessedSignature
         }
       )
-      console.log('sigs: ', sigs)
 
       // No need to filter signatures anymore since we're using 'until'
       if (sigs.length === 0) {
@@ -111,8 +110,6 @@ export const stealthWorkers = (app, _, done) => {
       const results = []
 
       for (const signature of sigs) {
-        console.log('signature: ', signature)
-
         // Check if the signature is already in the database
         const existingPayment = await prismaQuery.payment.findUnique({
           where: { txHash: signature.signature }
@@ -124,8 +121,6 @@ export const stealthWorkers = (app, _, done) => {
         })
 
         if (existingPayment) continue;
-
-        console.log('Processing signature: ', signature.signature)
 
         const transaction = await connection.getTransaction(signature.signature, {
           commitment: "confirmed",
@@ -172,15 +167,12 @@ export const stealthWorkers = (app, _, done) => {
         }
       }
 
-      console.log('Stealth Program event results: ', results)
       if (results.length === 0) {
         console.log('No new stealth transactions found');
         return;
       }
 
       for (const result of results) {
-        console.log('result: ', result)
-
         // Handle token caching
         let tokenCache;
         if (result.data.mint === NATIVE_SOL_MINT) {
