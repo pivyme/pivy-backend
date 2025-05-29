@@ -4,7 +4,7 @@ import FastifyCors from "@fastify/cors";
 import FastifyMultipart from "@fastify/multipart";
 import Fastify from "fastify";
 import { addressRoutes } from "./src/routes/addressRoutes.js";
-import { authRoutes } from './src/routes/authRoutes.js';
+import { authRoutes, handleAirdropTestSolanaTokens } from './src/routes/authRoutes.js';
 import { cctpRoutes } from "./src/routes/cctpRoutes.js";
 import { linkRoutes } from "./src/routes/linkRoutes.js";
 import { userRoutes } from "./src/routes/userRoutes.js";
