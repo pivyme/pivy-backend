@@ -23,6 +23,7 @@ enum Chain {
 enum WalletChain {
   SOLANA
   SUI
+  SUI_ZKLOGIN
 }
 
 model User {

@@ -67,13 +67,18 @@ export const addressRoutes = (app, _, done) => {
           null
       };
 
+      let sourceChain = user.walletChain;
+      if (user.walletChain === 'SUI_ZKLOGIN') {
+        sourceChain = 'SUI';
+      }
+
       const data = {
         username: user.username,
         tag: link.tag,
         metaSpendPub: metaSpendPub,
         metaViewPub: metaViewPub,
         linkData: linkData,
-        sourceChain: user.walletChain
+        sourceChain: sourceChain
       }
 
       return reply.status(200).send(data);

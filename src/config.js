@@ -38,4 +38,8 @@ export const WALLET_CHAINS = {
     id: 'SUI',
     name: 'Sui',
   },
+  SUI_ZKLOGIN: {
+    id: 'SUI_ZKLOGIN',
+    name: 'Sui zkLogin',
+  },
 }

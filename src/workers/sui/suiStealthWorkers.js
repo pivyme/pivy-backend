@@ -179,7 +179,9 @@ export const suiStealthWorkers = (app, _, done) => {
 
         const users = await prismaQuery.user.findMany({
           where: {
-            walletChain: 'SUI',
+            walletChain: {
+              in: ['SUI', 'SUI_ZKLOGIN']
+            },
             metaViewPriv: {
               not: null
             },
