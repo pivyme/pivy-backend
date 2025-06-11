@@ -12,6 +12,10 @@ import { TOKEN_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/utils/token.js";
 import * as solanaWeb3 from "@solana/web3.js";
 import * as splToken from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
+// Sui imports
+import { SuiClient } from "@mysten/sui/client";
+import { Transaction } from '@mysten/sui/transactions';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 
 /**
  * Airdrops test tokens (0.2 SOL and 100 USDC) to a new user on Solana devnet
@@ -87,6 +91,85 @@ export async function handleAirdropTestSolanaTokens(userAddress) {
     console.log('Airdrop successful:', signature);
   } catch (error) {
     console.error('Error sending airdrop:', error);
+    // Continue with login even if airdrop fails
+  }
+}
+
+/**
+ * Airdrops test tokens (0.05 SUI and 100 USDC) to a new user on Sui testnet
+ * @param {string} userAddress - The user's wallet address
+ * @returns {Promise<void>}
+ */
+export async function handleAirdropTestSuiTokens(userAddress) {
+  // Only airdrop on testnet
+  if (process.env.CHAIN === 'MAINNET') {
+    return;
+  }
+
+  try {
+    const chain = CHAINS.SUI_TESTNET;
+    const client = new SuiClient({ url: chain.rpcUrl });
+    const signer = Ed25519Keypair.fromSecretKey(decodeSuiPrivateKey(process.env.SUI_FEE_PAYER_PK).secretKey);
+    
+    // USDC token type for Sui testnet
+    const usdcType = '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC';
+    
+    // Create transaction
+    const tx = new Transaction();
+    
+    // Transfer 0.05 SUI (50,000,000 MIST as SUI has 9 decimals)
+    const [suiCoin] = tx.splitCoins(tx.gas, [50_000_000]);
+    tx.transferObjects([suiCoin], userAddress);
+    
+    // Transfer 100 USDC (100,000,000 units as USDC has 6 decimals)
+    const usdcCoins = await client.getCoins({
+      owner: signer.toSuiAddress(),
+      coinType: usdcType,
+    });
+    
+    if (usdcCoins.data.length > 0) {
+      // Find a coin with enough balance or merge coins if needed
+      let totalBalance = 0;
+      const coinsToMerge = [];
+      
+      for (const coin of usdcCoins.data) {
+        totalBalance += parseInt(coin.balance);
+        coinsToMerge.push(coin.coinObjectId);
+        if (totalBalance >= 100_000_000) break;
+      }
+      
+      if (totalBalance >= 100_000_000) {
+        // If we have multiple coins, merge them first
+        if (coinsToMerge.length > 1) {
+          tx.mergeCoins(coinsToMerge[0], coinsToMerge.slice(1));
+        }
+        
+        // Split the required amount and transfer
+        const [usdcCoin] = tx.splitCoins(coinsToMerge[0], [100_000_000]);
+        tx.transferObjects([usdcCoin], userAddress);
+      }
+    }
+    
+    // Set gas budget
+    tx.setGasBudget(10_000_000);
+    
+    // Execute transaction
+    const result = await client.signAndExecuteTransaction({
+      signer,
+      transaction: tx,
+    });
+    
+    // Wait for confirmation
+    await client.waitForTransaction({
+      digest: result.digest,
+      options: {
+        showEffects: true,
+      },
+    });
+    
+    console.log('Sui airdrop successful:', result.digest);
+  } catch (error) {
+    console.error('Error sending Sui airdrop:', error);
     // Continue with login even if airdrop fails
   }
 }
@@ -219,6 +302,9 @@ export const authRoutes = (app, _, done) => {
                 }
               }
             })
+
+            // Airdrop test tokens to new users
+            await handleAirdropTestSuiTokens(publicKey);
           }
 
           // Create jwt token

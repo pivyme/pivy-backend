@@ -166,8 +166,6 @@ export const suiStealthWorkers = (app, _, done) => {
       }
 
       for (const result of results) {
-        console.log('result: ', result)
-
         let tokenCache;
         if (result.data.mint === NATIVE_SUI_MINT) {
           tokenCache = await getOrCreateNativeSUICache(chain.id);
