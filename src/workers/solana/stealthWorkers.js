@@ -1,10 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
-import { CHAINS } from "../config.js";
-import { PIVY_STEALTH_IDL } from "../lib/pivy-stealth/IDL.js";
-import { prismaQuery } from "../lib/prisma.js";
+import { CHAINS } from "../../config.js";
+import { PIVY_STEALTH_IDL } from "../../lib/pivy-stealth/IDL.js";
+import { prismaQuery } from "../../lib/prisma.js";
 import { processPaymentTx, processWithdrawalTx } from "./helpers/activityHelpers.js";
-import { getOrCreateTokenCache } from "../utils/solanaUtils.js";
+import { getOrCreateTokenCache } from "../../utils/solanaUtils.js";
 import cron from "node-cron";
 
 const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -95,7 +95,6 @@ export const stealthWorkers = (app, _, done) => {
           until: lastProcessedSignature
         }
       )
-      console.log('sigs: ', sigs)
 
       // No need to filter signatures anymore since we're using 'until'
       if (sigs.length === 0) {
@@ -111,8 +110,6 @@ export const stealthWorkers = (app, _, done) => {
       const results = []
 
       for (const signature of sigs) {
-        console.log('signature: ', signature)
-
         // Check if the signature is already in the database
         const existingPayment = await prismaQuery.payment.findUnique({
           where: { txHash: signature.signature }
@@ -124,8 +121,6 @@ export const stealthWorkers = (app, _, done) => {
         })
 
         if (existingPayment) continue;
-
-        console.log('Processing signature: ', signature.signature)
 
         const transaction = await connection.getTransaction(signature.signature, {
           commitment: "confirmed",
@@ -172,15 +167,12 @@ export const stealthWorkers = (app, _, done) => {
         }
       }
 
-      console.log('Stealth Program event results: ', results)
       if (results.length === 0) {
         console.log('No new stealth transactions found');
         return;
       }
 
       for (const result of results) {
-        console.log('result: ', result)
-
         // Handle token caching
         let tokenCache;
         if (result.data.mint === NATIVE_SOL_MINT) {
@@ -189,14 +181,28 @@ export const stealthWorkers = (app, _, done) => {
           tokenCache = await getOrCreateTokenCache(
             result.data.mint,
             chain.id,
-            connection,
-            prismaQuery
+            connection
           );
         }
 
-        const users = await prismaQuery.user.findMany({})
+        const users = await prismaQuery.user.findMany({
+          where: {
+            walletChain: 'SOLANA',
+            metaViewPriv: {
+              not: null
+            },
+            metaSpendPub: {
+              not: null
+            }
+          }
+        })
 
         if (result.type === 'IN') {
+          if (result.data.announce === true) {
+            // Skip announcement payments
+            continue;
+          }
+
           const newPayment = await prismaQuery.payment.create({
             data: {
               txHash: result.signature,
@@ -216,10 +222,12 @@ export const stealthWorkers = (app, _, done) => {
                 }
               }
             }
-          })
+          }).catch(err => {
+            console.log('Error creating payment: ', err)
+          });
 
           await processPaymentTx({
-            txHash: newPayment.txHash,
+            txHash: result.signature,
             users: users
           })
         } else if (result.type === 'OUT') {
@@ -234,10 +242,10 @@ export const stealthWorkers = (app, _, done) => {
           });
 
           if (existingWithdrawal) {
-            console.log('Withdrawal already exists:', {
-              txHash: result.signature,
-              stealthOwnerPubkey: result.data.stealthOwner
-            });
+            // console.log('Withdrawal already exists:', {
+            //   txHash: result.signature,
+            //   stealthOwnerPubkey: result.data.stealthOwner
+            // });
             continue;
           }
 
@@ -268,7 +276,7 @@ export const stealthWorkers = (app, _, done) => {
         }
       }
 
-      console.log('Stealth Program event results: ', results)
+      // console.log('Stealth Program event results: ', results)
     } catch (error) {
       console.error('Error fetching stealth transactions:', error);
     }

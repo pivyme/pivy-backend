@@ -1,10 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
-import { CHAINS } from "../config.js";
-import { PIVY_STEALTH_IDL } from "../lib/pivy-stealth/IDL.js";
-import { prismaQuery } from "../lib/prisma.js";
+import { CHAINS } from "../../config.js";
+import { PIVY_STEALTH_IDL } from "../../lib/pivy-stealth/IDL.js";
+import { prismaQuery } from "../../lib/prisma.js";
 import { processPaymentTx, processWithdrawalTx } from "./helpers/activityHelpers.js";
-import { getOrCreateTokenCache } from "../utils/solanaUtils.js";
+import { getOrCreateTokenCache } from "../../utils/solanaUtils.js";
 
 const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
 const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
@@ -137,8 +137,7 @@ const processStealthTransaction = async (signatureInfo, chain, connection, parse
           tokenCache = await getOrCreateTokenCache(
             mint,
             chain.id,
-            connection,
-            prismaQuery
+            connection
           );
         }
 
@@ -184,10 +183,10 @@ const processStealthTransaction = async (signatureInfo, chain, connection, parse
         });
 
         if (existingWithdrawal) {
-          console.log('Withdrawal already exists:', {
-            txHash: signature,
-            stealthOwnerPubkey: eventData.stealthOwner.toBase58()
-          });
+          // console.log('Withdrawal already exists:', {
+          //   txHash: signature,
+          //   stealthOwnerPubkey: eventData.stealthOwner.toBase58()
+          // });
           continue;
         }
 
@@ -198,8 +197,7 @@ const processStealthTransaction = async (signatureInfo, chain, connection, parse
           tokenCache = await getOrCreateTokenCache(
             mint,
             chain.id,
-            connection,
-            prismaQuery
+            connection
           );
         }
 

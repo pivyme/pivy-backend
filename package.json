@@ -21,6 +21,7 @@
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.0.3",
     "@metaplex-foundation/js": "^0.20.1",
+    "@mysten/sui": "^1.30.0",
     "@noble/curves": "^1.9.1",
     "@noble/ed25519": "^1.6.0",
     "@noble/hashes": "^1.4.0",

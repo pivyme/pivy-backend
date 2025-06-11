@@ -16,6 +16,13 @@ datasource db {
 enum Chain {
   MAINNET
   DEVNET
+  SUI_MAINNET
+  SUI_TESTNET
+}
+
+enum WalletChain {
+  SOLANA
+  SUI
 }
 
 model User {
@@ -24,13 +31,15 @@ model User {
   walletAddress String  @unique
   username      String? @unique
 
-  metaSpendPriv String
-  metaViewPriv  String
-  metaSpendPub  String
-  metaViewPub   String
+  metaViewPriv  String?
+  metaSpendPub  String?
+  metaViewPub   String?
 
   links Link[]
   withdrawals Withdrawal[]
+  withdrawalGroups SuiWithdrawalGroup[]
+
+  walletChain WalletChain @default(SOLANA)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -183,6 +192,19 @@ model MainPrice {
   id       String @id @default(cuid())
   symbol   String @unique
   priceUsd Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SuiWithdrawalGroup {
+  id String @id
+
+  txHashes String[]
+  chain Chain
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

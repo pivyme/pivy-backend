@@ -3,7 +3,11 @@ import { CHAINS } from "../config.js";
 import { prismaQuery } from "../lib/prisma.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 import { TOKEN_PROGRAM_ID } from "@coral-xyz/anchor/dist/cjs/utils/token.js";
-import { getTokenInfo, getWalletsTokensHolding } from "../utils/solanaUtils.js";
+import { getTokenInfo, getWalletsTokensHolding, formatSolanaBalances } from "../utils/solanaUtils.js";
+import { getSolanaPortfolio } from "../helpers/solana/solanaHelpers.js";
+import { SuiClient } from "@mysten/sui/client";
+import { getSuiPortfolio } from "../helpers/sui/suiHelpers.js";
+import { getSuiWalletsTokensHolding, formatSuiBalances } from "../utils/suiUtils.js";
 
 // Simple in-memory cache implementation
 const balanceCache = new Map();
@@ -11,224 +15,51 @@ const CACHE_DURATION = 5 * 1000; // 15 seconds in milliseconds
 
 // Balance cache for user balances
 const userBalanceCache = new Map();
-const USER_BALANCE_CACHE_DURATION = 3 * 1000; // 30 seconds in milliseconds
+const USER_BALANCE_CACHE_DURATION = 5 * 1000; // 30 seconds in milliseconds
 
-const getCachedBalance = (address) => {
-  const cached = balanceCache.get(address);
+const getCachedBalance = (address, chain) => {
+  const key = `${chain.id}_${address}`;
+  const cached = balanceCache.get(key);
   if (!cached) return null;
 
   // Check if cache has expired
   if (Date.now() - cached.timestamp > CACHE_DURATION) {
-    balanceCache.delete(address);
+    balanceCache.delete(key);
     return null;
   }
 
   return cached.data;
 };
 
-const setCachedBalance = (address, data) => {
-  balanceCache.set(address, {
+const setCachedBalance = (address, chain, data) => {
+  const key = `${chain.id}_${address}`;
+  balanceCache.set(key, {
     data,
     timestamp: Date.now()
   });
 };
 
 const getCachedUserBalance = (userId, chain) => {
-  const key = `${userId}-${chain}`;
+  const key = `${chain.id}_${userId}`;
   const cached = userBalanceCache.get(key);
   if (!cached) return null;
-  
+
   // Check if cache has expired
   if (Date.now() - cached.timestamp > USER_BALANCE_CACHE_DURATION) {
     userBalanceCache.delete(key);
     return null;
   }
-  
+
   return cached.data;
 };
 
 const setCachedUserBalance = (userId, chain, data) => {
-  const key = `${userId}-${chain}`;
+  const key = `${chain.id}_${userId}`;
   userBalanceCache.set(key, {
     data,
     timestamp: Date.now()
   });
 };
-
-async function formatBalances(balances, chain, addressToEphemeralMap) {
-  const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
-
-  // Get unique token addresses from all balances
-  const tokenAddresses = new Set([WRAPPED_SOL_MINT]); // Always include wrapped SOL
-  balances.forEach(wallet => {
-    wallet.tokenBalances.forEach(token => {
-      tokenAddresses.add(token.tokenAddress);
-    });
-  });
-
-  // Fetch all token info from cache
-  const tokenInfos = await prismaQuery.mintDataCache.findMany({
-    where: {
-      mintAddress: {
-        in: Array.from(tokenAddresses)
-      },
-      chain: chain
-    }
-  });
-
-  // Create token info map for quick lookup
-  const tokenInfoMap = new Map(
-    tokenInfos.map(info => [info.mintAddress, info])
-  );
-
-  // Helper function to format amount based on decimals
-  const formatAmount = (amount, decimals) => {
-    // Convert to string and split at decimal point
-    const [whole, fraction = ""] = amount.toString().split(".");
-    
-    // If no decimal part, return as is
-    if (!fraction) return amount;
-
-    // Truncate to max decimals
-    const truncated = fraction.slice(0, decimals);
-    
-    // Remove trailing zeros
-    const cleaned = truncated.replace(/0+$/, "");
-    
-    // If only zeros after decimal, return whole number
-    if (!cleaned) return Number(whole);
-    
-    // Combine whole and truncated fraction
-    return Number(`${whole}.${cleaned}`);
-  };
-
-  // Initialize result structure
-  const result = {
-    native: {
-      name: "Solana",
-      symbol: "SOL",
-      decimals: 9,
-      imageUrl: "https://assets.coingecko.com/coins/images/4128/standard/solana.png?1718769756",
-      total: 0,
-      usdValue: 0,
-      balances: []
-    },
-    spl: []
-  };
-
-  // Get all payments to fetch memos
-  const allPayments = await prismaQuery.payment.findMany({
-    where: {
-      stealthOwnerPubkey: {
-        in: balances.map(b => b.address)
-      }
-    },
-    select: {
-      stealthOwnerPubkey: true,
-      memo: true
-    }
-  });
-
-  // Create a map of address to memo
-  const addressToMemoMap = new Map();
-  allPayments.forEach(payment => {
-    if (payment.memo) {
-      // First remove the array index if it exists
-      const withoutIndex = payment.memo.replace(/^\[\d+\]\s*/, '');
-      // Then try to extract content from angle brackets if they exist
-      const memoMatch = withoutIndex.match(/<(.+)>/);
-      const cleanMemo = memoMatch ? memoMatch[1] : withoutIndex;
-      addressToMemoMap.set(payment.stealthOwnerPubkey, cleanMemo);
-    }
-  });
-
-  // Process each wallet's balances
-  balances.forEach(wallet => {
-    // Add native balance
-    const nativeAmount = wallet.nativeBalance / LAMPORTS_PER_SOL;
-    if (nativeAmount > 0) {
-      result.native.total += nativeAmount;
-      result.native.balances.push({
-        address: wallet.address,
-        ephemeralPubkey: addressToEphemeralMap.get(wallet.address),
-        memo: addressToMemoMap.get(wallet.address),
-        amount: formatAmount(nativeAmount, 9) // SOL has 9 decimals
-      });
-    }
-  });
-  // Format the native total
-  result.native.total = formatAmount(result.native.total, 9);
-
-  // Process token balances
-  balances.forEach(wallet => {
-    wallet.tokenBalances.forEach(token => {
-      const tokenInfo = tokenInfoMap.get(token.tokenAddress);
-      if (!tokenInfo) return; // Skip if no token info
-
-      // Find existing token entry or create new one
-      let tokenEntry = result.spl.find(t => t.mintAddress === token.tokenAddress);
-      
-      if (!tokenEntry) {
-        tokenEntry = {
-          mintAddress: tokenInfo.mintAddress,
-          name: tokenInfo.name,
-          symbol: tokenInfo.symbol,
-          decimals: tokenInfo.decimals,
-          imageUrl: tokenInfo.imageUrl,
-          total: 0,
-          usdValue: 0,
-          balances: []
-        };
-        result.spl.push(tokenEntry);
-      }
-
-      // Calculate human readable amount with proper decimals
-      const amount = token.amount / (10 ** tokenInfo.decimals);
-      tokenEntry.total += amount;
-      tokenEntry.balances.push({
-        address: wallet.address,
-        ephemeralPubkey: addressToEphemeralMap.get(wallet.address),
-        memo: addressToMemoMap.get(wallet.address),
-        amount: formatAmount(amount, tokenInfo.decimals)
-      });
-    });
-  });
-
-  // Format all SPL token totals
-  result.spl.forEach(token => {
-    token.total = formatAmount(token.total, token.decimals);
-  });
-
-  // Calculate USD values (hardcoded $1 per token)
-  result.native.usdValue = result.native.total * 1;
-  result.spl.forEach(token => {
-    token.usdValue = token.total * 1;
-  });
-
-  // Ensure wrapped SOL exists in the list
-  const wrappedSolInfo = tokenInfoMap.get(WRAPPED_SOL_MINT);
-  if (wrappedSolInfo && !result.spl.find(t => t.mintAddress === WRAPPED_SOL_MINT)) {
-    result.spl.push({
-      mintAddress: wrappedSolInfo.mintAddress,
-      name: wrappedSolInfo.name,
-      symbol: wrappedSolInfo.symbol,
-      decimals: wrappedSolInfo.decimals,
-      imageUrl: wrappedSolInfo.imageUrl,
-      total: 0,
-      usdValue: 0,
-      balances: []
-    });
-  }
-
-  // Sort SPL tokens: Wrapped SOL first, then by USD value
-  result.spl.sort((a, b) => {
-    if (a.mintAddress === WRAPPED_SOL_MINT) return -1;
-    if (b.mintAddress === WRAPPED_SOL_MINT) return 1;
-    return b.usdValue - a.usdValue;
-  });
-
-  return result;
-}
 
 /**
  *
@@ -286,6 +117,8 @@ export const userRoutes = (app, _, done) => {
   app.get("/balance/:address", async (req, reply) => {
     try {
       const { address } = req.params;
+      const chainQuery = req.query.chain;
+      console.log('chainQuery', chainQuery)
 
       if (!address) {
         return reply.code(400).send({
@@ -293,130 +126,42 @@ export const userRoutes = (app, _, done) => {
         });
       }
 
-      // Check cache first
-      const cachedBalance = getCachedBalance(address);
+      const chain = CHAINS[chainQuery]
+      if (!chain?.id) {
+        return reply.code(400).send({
+          message: "Invalid chain",
+        });
+      }
+
+      // Check cache first with chain-specific key
+      const cachedBalance = getCachedBalance(address, chain);
       if (cachedBalance) {
         return reply.code(200).send(cachedBalance);
       }
 
-      const chain = CHAINS[process.env.CHAIN]
-
-      const connection = new Connection(chain.rpcUrl, "confirmed");
-      const publicKey = new PublicKey(address);
-
-      // Fetch all token accounts by owner
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        publicKey,
-        {
-          programId: TOKEN_PROGRAM_ID
-        }
-      );
-
-      const fetchMintData = async (mintAddress, tokenAccountData) => {
-        let existingCache = await prismaQuery.mintDataCache.findUnique({
-          where: {
-            mintAddress_chain: {
-              mintAddress: mintAddress,
-              chain: chain.id
-            }
-          },
-        });
-
-        if (existingCache) {
-          return existingCache;
-        }
-
+      // Solana
+      if (chain.id === "MAINNET" || chain.id === "DEVNET") {
         const connection = new Connection(chain.rpcUrl, "confirmed");
-        const tokenInfo = await getTokenInfo(
-          mintAddress,
-          connection
-        )
+        const portfolioInfo = await getSolanaPortfolio(address, chain.id, connection);
 
-        // Create fallback data using the mint address
-        const shortAddr = mintAddress.slice(0, 5).toUpperCase();
-        const fallbackData = {
-          mintAddress: mintAddress,
-          chain: chain.id,
-          name: 'Unknown Token',
-          symbol: shortAddr,
-          decimals: tokenAccountData.tokenAmount.decimals,
-          imageUrl: null,
-          description: `Token at address ${mintAddress}`,
-          uriData: {},
-          isInvalid: false
-        };
+        // Cache the result before sending with chain-specific key
+        setCachedBalance(address, chain, portfolioInfo);
 
-        if (!tokenInfo) {
-          existingCache = await prismaQuery.mintDataCache.create({
-            data: fallbackData
-          })
+        return reply.code(200).send(portfolioInfo);
+      }
 
-          return existingCache;
-        }
-
-        existingCache = await prismaQuery.mintDataCache.create({
-          data: {
-            mintAddress: mintAddress,
-            chain: chain.id,
-            name: tokenInfo.name || fallbackData.name,
-            symbol: tokenInfo.symbol || fallbackData.symbol,
-            decimals: tokenInfo.decimals || tokenAccountData.tokenAmount.decimals,
-            imageUrl: tokenInfo.image || fallbackData.imageUrl,
-            description: tokenInfo.description || fallbackData.description,
-            uriData: tokenInfo.uriData || fallbackData.uriData,
-          }
+      // Sui
+      if (chain.id === "SUI_MAINNET" || chain.id === "SUI_TESTNET") {
+        const suiClient = new SuiClient({
+          url: chain.rpcUrl
         })
+        const portfolioInfo = await getSuiPortfolio(address, chain.id, suiClient)
 
-        return existingCache;
-      };
+        // Cache the result before sending with chain-specific key
+        setCachedBalance(address, chain, portfolioInfo);
 
-      // Create an empty array to store the portfolio data
-      const portfolioData = [];
-
-      for (let i = 0; i < tokenAccounts.value.length; i++) {
-        const accountInfo = tokenAccounts.value[i];
-        const accountData = accountInfo.account.data.parsed.info;
-
-        const mint = accountData.mint;
-
-        // Fetch mint data asynchronously
-        const mintData = await fetchMintData(mint, accountData);
-
-        // Push the processed data into the portfolioData array
-        portfolioData.push({
-          mint: accountData.mint,
-          owner: accountData.owner,
-          tokenAmount: accountData.tokenAmount.uiAmount,
-          token: {
-            name: mintData.name,
-            symbol: mintData.symbol,
-            decimals: accountData.tokenAmount.decimals,
-            imageUrl: mintData.imageUrl,
-            description: mintData.description,
-          }
-        });
+        return reply.code(200).send(portfolioInfo);
       }
-
-      // Get Native SOL balance
-      const balance = await connection.getBalance(publicKey)
-      const nativeBalance = {
-        name: "SOL",
-        symbol: "SOL",
-        decimals: 9,
-        imageUrl: 'https://assets.coingecko.com/coins/images/4128/standard/solana.png?1718769756',
-        amount: balance / LAMPORTS_PER_SOL,
-      }
-
-      const portfolioInfo = {
-        nativeBalance: nativeBalance,
-        splBalance: portfolioData,
-      };
-
-      // Cache the result before sending
-      setCachedBalance(address, portfolioInfo);
-
-      return reply.code(200).send(portfolioInfo);
-
     } catch (error) {
       console.log("Error getting portfolio info: ", error)
       return reply.code(500).send({
@@ -430,12 +175,20 @@ export const userRoutes = (app, _, done) => {
     preHandler: [authMiddleware]
   }, async (request, reply) => {
     try {
+      const chain = CHAINS[request.query.chain]
+      if (!chain) {
+        return reply.code(400).send({
+          message: "Invalid chain",
+        });
+      }
+
       // Get all payments for the user's links
       const payments = await prismaQuery.payment.findMany({
         where: {
           link: {
             userId: request.user.id
-          }
+          },
+          chain: chain.id
         },
         include: {
           // Include token data
@@ -510,7 +263,7 @@ export const userRoutes = (app, _, done) => {
             total: "0"
           };
         }
-        
+
         // Add the amounts (they are strings, so we need to convert to BigInt)
         const currentTotal = BigInt(acc[withdrawal.txHash].tokens[tokenKey].total);
         const newAmount = BigInt(withdrawal.amount);
@@ -566,6 +319,81 @@ export const userRoutes = (app, _, done) => {
       const allActivities = [...paymentActivities, ...withdrawalActivities]
         .sort((a, b) => b.timestamp - a.timestamp);
 
+      if (chain.id === "SUI_MAINNET" || chain.id === "SUI_TESTNET") {
+        const withdrawalGroups = await prismaQuery.suiWithdrawalGroup.findMany({
+          where: {
+            userId: request.user.id
+          }
+        });
+
+        // Create a map of txHash to withdrawal group
+        const txHashToGroupMap = new Map();
+        const groupedWithdrawals = new Map(); // Track grouped withdrawals
+        withdrawalGroups.forEach(group => {
+          group.txHashes.forEach(txHash => {
+            txHashToGroupMap.set(txHash, group);
+          });
+        });
+
+        // First pass: Group withdrawals and sum their amounts
+        allActivities.forEach(activity => {
+          if (activity.type === 'WITHDRAWAL') {
+            const group = txHashToGroupMap.get(activity.id);
+            if (group) {
+              if (!groupedWithdrawals.has(group.id)) {
+                // Create new grouped withdrawal
+                groupedWithdrawals.set(group.id, {
+                  ...activity,
+                  id: group.id,
+                  withdrawalId: group.id,
+                  amount: activity.amount,
+                  tokens: { ...activity.tokens }
+                });
+              } else {
+                // Update existing grouped withdrawal
+                const existing = groupedWithdrawals.get(group.id);
+                const newAmount = BigInt(existing.amount) + BigInt(activity.amount);
+                existing.amount = newAmount.toString();
+                
+                // Update tokens if they exist
+                if (activity.tokens && existing.tokens) {
+                  Object.entries(activity.tokens).forEach(([symbol, tokenInfo]) => {
+                    if (!existing.tokens[symbol]) {
+                      existing.tokens[symbol] = { ...tokenInfo };
+                    } else {
+                      const newTotal = BigInt(existing.tokens[symbol].total) + BigInt(tokenInfo.total);
+                      existing.tokens[symbol].total = newTotal.toString();
+                    }
+                  });
+                }
+              }
+            }
+          }
+        });
+
+        // Second pass: Create final activities array
+        const groupedActivities = allActivities.reduce((acc, activity) => {
+          if (activity.type === 'WITHDRAWAL') {
+            const group = txHashToGroupMap.get(activity.id);
+            if (group) {
+              // Only add the grouped withdrawal if we haven't added it yet
+              if (!acc.some(a => a.withdrawalId === group.id)) {
+                acc.push(groupedWithdrawals.get(group.id));
+              }
+            } else {
+              // Add ungrouped withdrawal as is
+              acc.push(activity);
+            }
+          } else {
+            // Add non-withdrawal activity as is
+            acc.push(activity);
+          }
+          return acc;
+        }, []);
+
+        return reply.send(groupedActivities);
+      }
+
       return reply.send(allActivities);
     } catch (error) {
       console.error('Error fetching activities:', error);
@@ -580,96 +408,170 @@ export const userRoutes = (app, _, done) => {
     preHandler: [authMiddleware]
   }, async (request, reply) => {
     try {
-      const { chain = "DEVNET" } = request.query;
-
-      // Check cache first
-      const cachedBalance = getCachedUserBalance(request.user.id, chain);
-      if (cachedBalance) {
-        return reply.send(cachedBalance);
+      // const { chain = "DEVNET" } = request.query;
+      const chain = CHAINS[request.query.chain]
+      if (!chain) {
+        return reply.code(400).send({
+          message: "Invalid chain",
+        });
       }
 
-      const connection = new Connection(CHAINS[chain].rpcUrl, "confirmed");
+      if (chain.id === "DEVNET" || chain.id === "MAINNET") {
 
-      // Get all user owned addresses that is in Payment table
-      const allPayments = await prismaQuery.payment.findMany({
-        where: {
-          link: {
-            userId: request.user.id
-          }
-        },
-        select: {
-          stealthOwnerPubkey: true,
-          ephemeralPubkey: true,
-          memo: true
-        },
-        distinct: ['stealthOwnerPubkey']
-      });
-
-      // Create a map of address to ephemeral key
-      const addressToEphemeralMap = new Map(
-        allPayments.map(p => [p.stealthOwnerPubkey, p.ephemeralPubkey])
-      );
-
-      const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
-      // console.log('All addresses', allAddresses);
-
-      const balances = await getWalletsTokensHolding(allAddresses, connection);
-      // console.log('Raw balances', balances);
-
-      // Format balances with token info and ephemeral keys
-      const formattedBalances = await formatBalances(balances, CHAINS[chain].id, addressToEphemeralMap);
-      // console.log('Formatted balances', formattedBalances);
-
-      // Get SOL price from mintDataCache
-      const solCache = await prismaQuery.mintDataCache.findUnique({
-        where: {
-          mintAddress_chain: {
-            mintAddress: 'So11111111111111111111111111111111111111112',
-            chain: CHAINS[chain].id
-          }
-        },
-        select: {
-          priceUsd: true
+        // Check cache first
+        const cachedBalance = getCachedUserBalance(request.user.id, chain);
+        if (cachedBalance) {
+          return reply.send(cachedBalance);
         }
-      });
 
-      // Get all token mint addresses from balances
-      const tokenMints = formattedBalances.spl.map(t => t.mintAddress);
-      
-      // Get all token prices from mintDataCache
-      const tokenPrices = await prismaQuery.mintDataCache.findMany({
-        where: {
-          AND: [
-            { mintAddress: { in: tokenMints } },
-            { chain: CHAINS[chain].id }
-          ]
-        },
-        select: {
-          mintAddress: true,
-          priceUsd: true
+        const connection = new Connection(chain.rpcUrl, "confirmed");
+
+        // Get all user owned addresses that is in Payment table
+        const allPayments = await prismaQuery.payment.findMany({
+          where: {
+            link: {
+              userId: request.user.id
+            }
+          },
+          select: {
+            stealthOwnerPubkey: true,
+            ephemeralPubkey: true,
+            memo: true
+          },
+          distinct: ['stealthOwnerPubkey']
+        });
+
+        // Create a map of address to ephemeral key
+        const addressToEphemeralMap = new Map(
+          allPayments.map(p => [p.stealthOwnerPubkey, p.ephemeralPubkey])
+        );
+
+        const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
+        // console.log('All addresses', allAddresses);
+
+        const balances = await getWalletsTokensHolding(allAddresses, connection);
+        // console.log('Raw balances', balances);
+
+        // Format balances with token info and ephemeral keys
+        const formattedBalances = await formatSolanaBalances(balances, chain.id, addressToEphemeralMap);
+        // console.log('Formatted balances', formattedBalances);
+
+        // Get SOL price from mintDataCache
+        const solCache = await prismaQuery.mintDataCache.findUnique({
+          where: {
+            mintAddress_chain: {
+              mintAddress: 'So11111111111111111111111111111111111111112',
+              chain: chain.id
+            }
+          },
+          select: {
+            priceUsd: true
+          }
+        });
+
+        // Get all token mint addresses from balances
+        const tokenMints = formattedBalances.tokens.map(t => t.mintAddress);
+
+        // Get all token prices from mintDataCache
+        const tokenPrices = await prismaQuery.mintDataCache.findMany({
+          where: {
+            AND: [
+              { mintAddress: { in: tokenMints } },
+              { chain: chain.id }
+            ]
+          },
+          select: {
+            mintAddress: true,
+            priceUsd: true
+          }
+        });
+
+        // Create price lookup map
+        const priceMap = new Map(tokenPrices.map(t => [t.mintAddress, t.priceUsd ?? 0]));
+
+        // Update native SOL USD value
+        formattedBalances.native.usdValue = formattedBalances.native.total * (solCache?.priceUsd ?? 0);
+
+        // Update token USD values
+        formattedBalances.tokens = formattedBalances.tokens.map(token => ({
+          ...token,
+          usdValue: token.total * (priceMap.get(token.mintAddress) ?? 0)
+        }));
+
+        // Remove the tokens that have total less than 0.00001
+        formattedBalances.tokens = formattedBalances.tokens.filter(token => token.total > 0.00001);
+
+        // Cache the formatted balances
+        setCachedUserBalance(request.user.id, chain, formattedBalances);
+
+        return reply.send(formattedBalances);
+      } else if (chain.id === "SUI_MAINNET" || chain.id === "SUI_TESTNET") {
+        // Check cache first
+        const cachedBalance = getCachedUserBalance(request.user.id, chain);
+        if (cachedBalance) {
+          return reply.send(cachedBalance);
         }
-      });
 
-      // Create price lookup map
-      const priceMap = new Map(tokenPrices.map(t => [t.mintAddress, t.priceUsd ?? 0]));
+        const allPayments = await prismaQuery.payment.findMany({
+          where: {
+            link: {
+              userId: request.user.id
+            }
+          },
+          select: {
+            stealthOwnerPubkey: true,
+            ephemeralPubkey: true,
+            memo: true
+          },
+          distinct: ['stealthOwnerPubkey']
+        })
 
-      // Update native SOL USD value
-      formattedBalances.native.usdValue = formattedBalances.native.total * (solCache?.priceUsd ?? 0);
+        const addressToEphemeralMap = new Map(
+          allPayments.map(p => [p.stealthOwnerPubkey, p.ephemeralPubkey])
+        );
 
-      // Update token USD values
-      formattedBalances.spl = formattedBalances.spl.map(token => ({
-        ...token,
-        usdValue: token.total * (priceMap.get(token.mintAddress) ?? 0)
-      }));
+        const allAddresses = allPayments.map(payment => payment.stealthOwnerPubkey);
+        const balances = await getSuiWalletsTokensHolding(allAddresses, chain.id)
 
-      // Cache the formatted balances
-      setCachedUserBalance(request.user.id, chain, formattedBalances);
+        // Format balances using the new formatter
+        const formattedBalances = await formatSuiBalances(balances, chain.id, addressToEphemeralMap);
 
-      return reply.send(formattedBalances);
+        // Cache the formatted balances
+        setCachedUserBalance(request.user.id, chain, formattedBalances);
+
+        return reply.send(formattedBalances);
+      }
     } catch (error) {
       console.error('Error fetching balances:', error);
       return reply.status(500).send({
         error: 'Failed to fetch balances'
+      });
+    }
+  })
+
+  app.post('/sui/withdrawal-group', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    try {
+      const { withdrawalId } = request.body;
+      const { chain } = request.query;
+
+      const txHashes = withdrawalId.split('|')
+      console.log('txHashes', txHashes)
+      const withdrawalGroup = await prismaQuery.suiWithdrawalGroup.create({
+        data: {
+          id: withdrawalId,
+          txHashes: txHashes,
+          chain: chain,
+          userId: request.user.id
+        }
+      })
+
+      return reply.send(withdrawalGroup)
+    } catch (error) {
+      console.error('Error creating withdrawal group:', error);
+      return reply.status(500).send({
+        error: 'Failed to create withdrawal group'
       });
     }
   })
