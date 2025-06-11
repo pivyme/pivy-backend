@@ -1,21 +1,9 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
-import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
+import { decodeSuiPrivateKey, encodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { sha256 } from '@noble/hashes/sha256';
 import * as ed from '@noble/ed25519';
-import { blake2b } from '@noble/hashes/blake2b';
-import { ed25519 } from '@noble/curves/ed25519';
 import { randomBytes } from 'crypto';
 import bs58 from 'bs58';
-
-/**
- * Constants used in stealth address calculations
- * L is the ED25519 curve order
- */
-const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');
-const mod = (x, n) => ((x % n) + n) % n;
-const ED25519_FLAG = 0x00;
 
 export const getPrivBytes = (kp) => {
   const { secretKey } = decodeSuiPrivateKey(kp.getSecretKey());
@@ -51,66 +39,6 @@ export const to32u8 = (raw) =>
           : (() => {
             throw new Error('Unsupported key format');
           })();
-
-/**
- * Converts bytes to a number using little-endian encoding
- * @param {Uint8Array} u8 - Bytes to convert
- * @returns {bigint} Resulting number
- */
-const bytesToNumberLE = (u8) =>
-  u8.reduceRight((p, c) => (p << 8n) + BigInt(c), 0n);
-
-/**
- * Converts a BigInt to 32-byte array in little-endian format
- * @param {bigint} bn - Number to convert
- * @returns {Uint8Array} 32-byte array
- */
-const bnTo32BytesLE = (bn) => {
-  const bytes = new Uint8Array(32);
-  let tmp = bn;
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = Number(tmp & 0xffn);
-    tmp >>= 8n;
-  }
-  return bytes;
-};
-
-/**
- * Clamps a private key according to ED25519 specifications
- * @param {Uint8Array} sk - Private key to clamp
- * @returns {Uint8Array} Clamped private key
- */
-const clamp = (sk) => {
-  const c = new Uint8Array(sk);
-  c[0] &= 248;
-  c[31] &= 127;
-  c[31] |= 64;
-  return c;
-};
-
-
-/**
- * Converts public key bytes to a Sui address
- * @param {Uint8Array} pubBytes - Public key bytes
- * @returns {string} Sui address (0x-prefixed hex)
- */
-const toSuiAddressFromPubBytes = (pubBytes) => {
-  // Create an Ed25519PublicKey instance from the raw bytes
-  const publicKey = new Ed25519PublicKey(pubBytes);
-
-  // Use the official Sui SDK method to get the address
-  return publicKey.toSuiAddress();
-};
-
-/**
- * Derives a scalar from a 32-byte seed using SHA-512
- * @param {Uint8Array} seed32 - 32-byte seed
- * @returns {bigint} Derived scalar
- */
-const scalarFromSeed = (seed32) => {
-  const h = sha512(seed32);
-  return bytesToNumberLE(clamp(h.slice(0, 32)));
-};
 
 /**
  * Encrypts an ephemeral private key using a meta-view public key
@@ -168,79 +96,28 @@ export async function decryptEphemeralPrivKey(encodedPayload, metaViewPriv, ephP
   return ephPriv32;
 }
 
-export async function deriveStealthPub(metaSpendPub, metaViewPub, ephPriv32, metaSpendPrivHex) {
-  // tweak = H(e ⨁ B)  mod L
-  const shared = await ed.getSharedSecret(
-    to32u8(ephPriv32),
-    to32u8(metaViewPub),
-  );
-  const tweak = mod(BigInt('0x' + Buffer.from(sha256(shared)).toString('hex')), L);
-
-  // S = A + tweak·G (point addition)
-  const Abytes = to32u8(metaSpendPub);
-  let Sbytes;
-  if (ed.utils.pointAddScalar) {
-    Sbytes = ed.utils.pointAddScalar(Abytes, tweak);
-  } else {
-    const A = ed25519.ExtendedPoint.fromHex(Abytes);
-    const S = A.add(ed25519.ExtendedPoint.BASE.multiply(tweak));
-    Sbytes = S.toRawBytes();
-  }
-
-  // If metaSpendPrivHex is provided, also compute the expected address
-  let stealthSuiAddress = null;
-  if (metaSpendPrivHex) {
-    // Calculate the same scalar that StealthSigner will use
-    const metaSpendPrivBytes = to32u8(metaSpendPrivHex);
-    const a = scalarFromSeed(metaSpendPrivBytes);
-    const s = mod(a + tweak, L);
-    const stealthPrivBytes = bnTo32BytesLE(s);
-    
-    // Create a keypair using the same method as StealthSigner
-    const tempKeypair = Ed25519Keypair.fromSecretKey(stealthPrivBytes);
-    stealthSuiAddress = tempKeypair.toSuiAddress();
-  }
-
-  // Return both the stealth pubkey and address (if available)
+export async function deriveStealthPub(metaSpendPubB58, metaViewPubB58, ephPriv32) {
+  console.log('🎯 Creating stealth address (public keys only)');
+  
+  // Calculate shared secret and tweak
+  const shared = await ed.getSharedSecret(to32u8(ephPriv32), to32u8(metaViewPubB58));
+  const tweak = sha256(shared); // Use SHA256 directly for simplicity
+  
+  // Create stealth seed deterministically
+  const stealthSeed = sha256(new Uint8Array([
+    ...to32u8(metaSpendPubB58),
+    ...tweak,
+    ...Buffer.from('STEALTH_V1', 'utf8')
+  ]));
+  
+  // Generate stealth keypair from seed (this is what Sui does internally)
+  const stealthKeypair = Ed25519Keypair.fromSecretKey(encodeSuiPrivateKey(stealthSeed, 'ED25519'));
+  const stealthAddress = stealthKeypair.getPublicKey().toSuiAddress();
+  
+  console.log('   Stealth address:', stealthAddress);
+  
   return {
-    stealthPubKeyB58: bs58.encode(Sbytes),
-    stealthSuiAddress
+    stealthPubKeyB58: bs58.encode(stealthKeypair.getPublicKey().toRawBytes()),
+    stealthSuiAddress: stealthAddress
   };
-}
-
-
-/**
- * Custom signer class for handling stealth transactions
- */
-class StealthSigner {
-  constructor(sBytes, stealthPubBytes) {
-    this.scalarBytes = sBytes; // Uint8Array(32)
-
-    // Use the provided stealth pub bytes directly
-    this.publicKeyBytes = stealthPubBytes || this.suiKeypair?.getPublicKey().toRawBytes();
-
-    // Create Sui keypair directly from the 32-byte private key
-    this.suiKeypair = Ed25519Keypair.fromSecretKey(this.scalarBytes);
-  }
-
-  publicKeyBase58() {
-    return bs58.encode(this.publicKeyBytes);
-  }
-
-  toSuiAddress() {
-    // Create an Ed25519PublicKey from publicKeyBytes to compute the address
-    return this.suiKeypair.toSuiAddress()
-  }
-
-  getSecretKey() {
-    return this.suiKeypair.getSecretKey();
-  }
-
-  async signMessage(message) {
-    return this.suiKeypair.signPersonalMessage(message);
-  }
-
-  async signTransaction(transaction) {
-    return this.suiKeypair.signTransaction(transaction);
-  }
 }

@@ -142,16 +142,9 @@ export const authRoutes = (app, _, done) => {
 
         // If user not found, create a new user
         if (!user) {
-          const spendKey = Keypair.generate();
-          const viewKey = Keypair.generate();
-
           user = await prismaQuery.user.create({
             data: {
               walletAddress: userAddress,
-              metaSpendPriv: Buffer.from(spendKey.secretKey.slice(0, 32)).toString("hex"),
-              metaViewPriv: Buffer.from(viewKey.secretKey.slice(0, 32)).toString("hex"),
-              metaSpendPub: spendKey.publicKey.toBase58(),
-              metaViewPub: viewKey.publicKey.toBase58(),
               walletChain: WALLET_CHAINS.SOLANA.id,
               links: {
                 create: {
@@ -212,27 +205,9 @@ export const authRoutes = (app, _, done) => {
 
           // If user not found, create a new user
           if (!user) {
-            const metaSpendKp = Ed25519Keypair.generate();
-            const metaViewKp = Ed25519Keypair.generate();
-
-            const metaSpendPriv = getPrivBytes(metaSpendKp);
-            const metaViewPriv = getPrivBytes(metaViewKp);
-
-            console.log({
-              metaSpendPriv,
-              metaViewPriv
-            })
-
-            const metaSpendPub = bs58.encode(getPubBytes(metaSpendKp));
-            const metaViewPub = bs58.encode(getPubBytes(metaViewKp));
-
             user = await prismaQuery.user.create({
               data: {
                 walletAddress: publicKey,
-                metaSpendPriv: Buffer.from(metaSpendPriv).toString("hex"),
-                metaViewPriv: Buffer.from(metaViewPriv).toString("hex"),
-                metaSpendPub: metaSpendPub,
-                metaViewPub: metaViewPub,
                 walletChain: WALLET_CHAINS.SUI.id,
                 links: {
                   create: {
@@ -279,6 +254,24 @@ export const authRoutes = (app, _, done) => {
     }
   })
 
+  app.post('/register-meta-keys', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    const { metaSpendPub, metaViewPub, metaViewPriv } = request.body;
+
+    const user = await prismaQuery.user.update({
+      where: {
+        id: request.user.id
+      },
+      data: {
+        metaSpendPub,
+        metaViewPub,
+        metaViewPriv
+      }
+    })
+
+    return reply.status(200).send(user);
+  })
 
   app.get('/me', {
     preHandler: [authMiddleware]

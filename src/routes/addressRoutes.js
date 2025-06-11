@@ -2,6 +2,7 @@ import { prismaQuery } from "../lib/prisma.js";
 import bs58 from "bs58";
 import * as ed from "@noble/ed25519";
 import { Keypair } from "@solana/web3.js";
+import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 /**
  *
@@ -61,19 +62,18 @@ export const addressRoutes = (app, _, done) => {
       const linkData = {
         ...link,
         amount: link.amount,
-        chainAmount: link.amount && link.mint ? 
-          BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
+        chainAmount: link.amount && link.mint ?
+          BigInt(link.amount * (10 ** link.mint.decimals)).toString() :
           null
       };
-      
+
       const data = {
         username: user.username,
         tag: link.tag,
         metaSpendPub: metaSpendPub,
         metaViewPub: metaViewPub,
         linkData: linkData,
-        sourceChain: user.walletChain,
-        s: user.walletChain === "SUI" ? user.metaSpendPriv : undefined
+        sourceChain: user.walletChain
       }
 
       return reply.status(200).send(data);

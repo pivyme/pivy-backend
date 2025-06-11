@@ -1,4 +1,4 @@
-import { deriveStealthKeypair, deriveStealthPubFromPriv } from "../../../lib/pivy-stealth/pivy-stealth.js"
+import { cleanupMemoPayload, decryptEphemeralPrivKey, deriveStealthKeypair, deriveStealthPub, deriveStealthPubFromPriv } from "../../../lib/pivy-stealth/pivy-stealth.js"
 import { prismaQuery } from "../../../lib/prisma.js"
 import cron from "node-cron"
 
@@ -13,30 +13,32 @@ export const processPaymentTx = async ({
   })
   // Will determine which payment is it and save it to the activity table
 
-  if (paymentTx.announce) {
+  if (paymentTx?.announce) {
     console.log("Detected announce payment")
   }
 
   let owner, link;
 
   for (const u of users) {
-    const expect = await deriveStealthPubFromPriv(
-      u.metaSpendPriv,
+    const decryptedEphPriv = await decryptEphemeralPrivKey(
+      cleanupMemoPayload(paymentTx.memo),
       u.metaViewPriv,
       paymentTx.ephemeralPubkey
     )
 
-    if (expect === paymentTx.stealthOwnerPubkey) {
+    const expect = await deriveStealthPub(
+      u.metaSpendPub,
+      u.metaViewPub,
+      decryptedEphPriv
+    )
+
+    if (expect.toBase58() === paymentTx.stealthOwnerPubkey) {
       owner = u;
       break;
     }
   }
 
   if (!owner) {
-    console.log("Owner not found", {
-      paymentTx: paymentTx,
-    })
-    // Mark as processed even if owner not found
     await prismaQuery.payment.update({
       where: {
         txHash: paymentTx.txHash
@@ -211,7 +213,16 @@ export const processPaymentActivities = async () => {
     take: 20
   })
 
-  const users = await prismaQuery.user.findMany({})
+  const users = await prismaQuery.user.findMany({
+    where: {
+      metaViewPriv: {
+        not: null
+      },
+      metaSpendPub: {
+        not: null
+      }
+    }
+  })
 
   for (const payment of unprocessedPayments) {
     await processPaymentTx({ txHash: payment.txHash, users: users })

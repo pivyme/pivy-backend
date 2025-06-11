@@ -19,7 +19,13 @@ export const processSuiPaymentTx = async ({
 
     const users = await prismaQuery.user.findMany({
       where: {
-        walletChain: 'SUI'
+        walletChain: 'SUI',
+        metaViewPriv: {
+          not: null
+        },
+        metaSpendPub: {
+          not: null
+        }
       }
     })
 
@@ -35,8 +41,7 @@ export const processSuiPaymentTx = async ({
       const stealthPubB58 = await deriveStealthPub(
         u.metaSpendPub,
         u.metaViewPub,
-        decryptedEphPriv,
-        u.metaSpendPriv
+        decryptedEphPriv
       )
 
       if (stealthPubB58.stealthSuiAddress === paymentTx.stealthOwnerPubkey) {

@@ -183,10 +183,10 @@ const processStealthTransaction = async (signatureInfo, chain, connection, parse
         });
 
         if (existingWithdrawal) {
-          console.log('Withdrawal already exists:', {
-            txHash: signature,
-            stealthOwnerPubkey: eventData.stealthOwner.toBase58()
-          });
+          // console.log('Withdrawal already exists:', {
+          //   txHash: signature,
+          //   stealthOwnerPubkey: eventData.stealthOwner.toBase58()
+          // });
           continue;
         }
 

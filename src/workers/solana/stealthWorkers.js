@@ -187,7 +187,13 @@ export const stealthWorkers = (app, _, done) => {
 
         const users = await prismaQuery.user.findMany({
           where: {
-            walletChain: 'SOLANA'
+            walletChain: 'SOLANA',
+            metaViewPriv: {
+              not: null
+            },
+            metaSpendPub: {
+              not: null
+            }
           }
         })
 
@@ -236,10 +242,10 @@ export const stealthWorkers = (app, _, done) => {
           });
 
           if (existingWithdrawal) {
-            console.log('Withdrawal already exists:', {
-              txHash: result.signature,
-              stealthOwnerPubkey: result.data.stealthOwner
-            });
+            // console.log('Withdrawal already exists:', {
+            //   txHash: result.signature,
+            //   stealthOwnerPubkey: result.data.stealthOwner
+            // });
             continue;
           }
 
@@ -270,7 +276,7 @@ export const stealthWorkers = (app, _, done) => {
         }
       }
 
-      console.log('Stealth Program event results: ', results)
+      // console.log('Stealth Program event results: ', results)
     } catch (error) {
       console.error('Error fetching stealth transactions:', error);
     }

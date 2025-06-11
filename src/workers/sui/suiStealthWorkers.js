@@ -62,7 +62,7 @@ export const suiStealthWorkers = (app, _, done) => {
   const handleFetchStealthTransactions = async () => {
     try {
       const chain = isTestnet ? CHAINS.SUI_TESTNET : CHAINS.SUI_MAINNET;
-      console.log('Fetching tx from', chain.pivyStealthProgramId)
+      // console.log('Fetching tx from', chain.pivyStealthProgramId)
 
       const latestPayment = await prismaQuery.payment.findFirst({
         where: { chain: chain.id },
@@ -181,7 +181,13 @@ export const suiStealthWorkers = (app, _, done) => {
 
         const users = await prismaQuery.user.findMany({
           where: {
-            walletChain: 'SUI'
+            walletChain: 'SUI',
+            metaViewPriv: {
+              not: null
+            },
+            metaSpendPub: {
+              not: null
+            }
           }
         })
 
