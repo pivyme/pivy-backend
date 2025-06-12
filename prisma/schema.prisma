@@ -130,7 +130,7 @@ model Payment {
   announce Boolean @default(false)
 
   linkId String?
-  link   Link?   @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  link   Link?   @relation(fields: [linkId], references: [id], onDelete: SetNull)
 
   isProcessed Boolean @default(false)
 
