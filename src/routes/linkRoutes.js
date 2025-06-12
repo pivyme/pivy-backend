@@ -45,6 +45,19 @@ export const linkRoutes = (app, _, done) => {
       // Generate slug from name
       const slug = data.slug;
 
+      // Check if there's an inactive link with the same tag
+      const existingInactiveLink = await prismaQuery.link.findFirst({
+        where: {
+          userId: request.user.id,
+          tag: slug,
+          isActive: false
+        },
+        include: {
+          file: true,
+          mint: true
+        }
+      });
+
       // Base link data that's common for all types
       const baseLinkData = {
         userId: request.user.id,
@@ -55,6 +68,7 @@ export const linkRoutes = (app, _, done) => {
         backgroundColor: data.backgroundColor,
         description: data.description,
         specialTheme: data.specialTheme,
+        isActive: true, // Make sure it's active
       };
 
       let link;
@@ -71,32 +85,79 @@ export const linkRoutes = (app, _, done) => {
         baseLinkData.amountType = 'OPEN';
       }
 
-      // Create the link with file if it's a download type
-      if (data.type === 'download' && fileData) {
-        link = await prismaQuery.link.create({
-          data: {
-            ...baseLinkData,
-            file: {
-              create: {
-                filename: fileData.filename,
-                mimetype: fileData.mimetype,
-                size: fileData.buffer.length,
-                data: fileData.buffer
+      // If there's an existing inactive link, reactivate and update it
+      if (existingInactiveLink) {
+        // Handle file for download type
+        if (data.type === 'download' && fileData) {
+          // Delete existing file if present
+          if (existingInactiveLink.file) {
+            await prismaQuery.file.delete({
+              where: { id: existingInactiveLink.file.id }
+            });
+          }
+
+          link = await prismaQuery.link.update({
+            where: { id: existingInactiveLink.id },
+            data: {
+              ...baseLinkData,
+              file: {
+                create: {
+                  filename: fileData.filename,
+                  mimetype: fileData.mimetype,
+                  size: fileData.buffer.length,
+                  data: fileData.buffer
+                }
               }
+            },
+            include: {
+              file: true,
+              mint: true
             }
-          },
-          include: {
-            file: true,
-            mint: true
+          });
+        } else {
+          // Delete file if switching from download to simple type
+          if (existingInactiveLink.file) {
+            await prismaQuery.file.delete({
+              where: { id: existingInactiveLink.file.id }
+            });
           }
-        });
+
+          link = await prismaQuery.link.update({
+            where: { id: existingInactiveLink.id },
+            data: baseLinkData,
+            include: {
+              mint: true
+            }
+          });
+        }
       } else {
-        link = await prismaQuery.link.create({
-          data: baseLinkData,
-          include: {
-            mint: true
-          }
-        });
+        // Create new link if no inactive link exists
+        if (data.type === 'download' && fileData) {
+          link = await prismaQuery.link.create({
+            data: {
+              ...baseLinkData,
+              file: {
+                create: {
+                  filename: fileData.filename,
+                  mimetype: fileData.mimetype,
+                  size: fileData.buffer.length,
+                  data: fileData.buffer
+                }
+              }
+            },
+            include: {
+              file: true,
+              mint: true
+            }
+          });
+        } else {
+          link = await prismaQuery.link.create({
+            data: baseLinkData,
+            include: {
+              mint: true
+            }
+          });
+        }
       }
 
       // Remove the file buffer from the response
@@ -116,8 +177,10 @@ export const linkRoutes = (app, _, done) => {
           null
       };
 
+      const message = existingInactiveLink ? "Link reactivated successfully" : "Link created successfully";
+      
       return reply.status(200).send({
-        message: "Link created successfully",
+        message: message,
         data: responseLink
       });
     } catch (error) {
@@ -147,6 +210,7 @@ export const linkRoutes = (app, _, done) => {
       const links = await prismaQuery.link.findMany({
         where: {
           userId: request.user.id,
+          isActive: true,
         },
         include: {
           file: {
@@ -320,8 +384,11 @@ export const linkRoutes = (app, _, done) => {
       }
 
       // First check if the link exists and belongs to the user
-      const existingLink = await prismaQuery.link.findUnique({
-        where: { id: linkId },
+      const existingLink = await prismaQuery.link.findFirst({
+        where: { 
+          id: linkId,
+          isActive: true
+        },
         include: { file: true }
       });
 
@@ -450,15 +517,18 @@ export const linkRoutes = (app, _, done) => {
       const { linkId } = request.params;
 
       // First check if the link exists and belongs to the user
-      const existingLink = await prismaQuery.link.findUnique({
-        where: { id: linkId },
+      const existingLink = await prismaQuery.link.findFirst({
+        where: { 
+          id: linkId,
+          isActive: true
+        },
         include: { file: true }
       });
 
       if (!existingLink) {
         return reply.status(404).send({
           message: "Link not found",
-          error: "The specified link does not exist",
+          error: "The specified link does not exist or has been deleted",
           data: null
         });
       }
@@ -481,16 +551,10 @@ export const linkRoutes = (app, _, done) => {
         });
       }
 
-      // If there's an associated file, delete it first
-      if (existingLink.file) {
-        await prismaQuery.file.delete({
-          where: { id: existingLink.file.id }
-        });
-      }
-
-      // Delete the link
-      await prismaQuery.link.delete({
-        where: { id: linkId }
+      // Soft delete the link by setting isActive to false
+      await prismaQuery.link.update({
+        where: { id: linkId },
+        data: { isActive: false }
       });
 
       return reply.status(200).send({

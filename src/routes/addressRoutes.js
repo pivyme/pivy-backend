@@ -67,7 +67,7 @@ export const addressRoutes = (app, _, done) => {
 
       const link = user.links.find(link => link.tag === tag);
 
-      if (!link) {
+      if (!link || link.isActive === false) {
         return reply.status(404).send({
           message: "Link not found",
           error: "Link not found",
