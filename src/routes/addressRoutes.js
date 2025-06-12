@@ -4,6 +4,27 @@ import * as ed from "@noble/ed25519";
 import { Keypair } from "@solana/web3.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
+// View count throttle cache - tracks last view increment time for each link
+const viewCountThrottleCache = new Map();
+const THROTTLE_DURATION = 3 * 1000; // 3 seconds in milliseconds
+
+/**
+ * Check if view count can be incremented for a given link
+ * @param {string} linkId - The link ID to check
+ * @returns {boolean} - True if view count can be incremented, false otherwise
+ */
+const canIncrementViewCount = (linkId) => {
+  const lastIncrementTime = viewCountThrottleCache.get(linkId);
+  const now = Date.now();
+  
+  if (!lastIncrementTime || (now - lastIncrementTime) >= THROTTLE_DURATION) {
+    viewCountThrottleCache.set(linkId, now);
+    return true;
+  }
+  
+  return false;
+};
+
 /**
  *
  * @param {import("fastify").FastifyInstance} app
@@ -79,6 +100,21 @@ export const addressRoutes = (app, _, done) => {
         metaViewPub: metaViewPub,
         linkData: linkData,
         sourceChain: sourceChain
+      }
+
+      // Only increment view count if throttle allows it (max once per 3 seconds)
+      if (canIncrementViewCount(link.id)) {
+        console.log('Incrementing view count for link', link.id);
+        await prismaQuery.link.update({
+          where: {
+            id: link.id
+          },
+          data: {
+            viewCount: { increment: 1 }
+          }
+        });
+      } else {
+        console.log('Skipping view count increment for link', link.id);
       }
 
       return reply.status(200).send(data);

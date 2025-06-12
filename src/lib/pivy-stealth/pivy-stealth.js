@@ -56,11 +56,6 @@ export async function encryptEphemeralPrivKey(ephPriv32, metaViewPub58) {
 }
 
 export async function decryptEphemeralPrivKey(encodedPayload, metaViewPriv, ephPub) {
-  console.log({
-    encodedPayload,
-    metaViewPriv,
-    ephPub
-  })
   // 1. Decode the payload
   const payload = bs58.decode(encodedPayload);
 

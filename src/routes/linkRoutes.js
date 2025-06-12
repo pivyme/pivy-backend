@@ -161,6 +161,11 @@ export const linkRoutes = (app, _, done) => {
             select: {
               username: true,
             }
+          },
+          payments: {
+            include: {
+              mint: true
+            }
           }
         },
         orderBy: {
@@ -175,6 +180,45 @@ export const linkRoutes = (app, _, done) => {
 
         const isPersonalLink = link.tag === "" && link.label === "personal"
 
+        // Process payments to create merged stats
+        const paymentStats = {};
+        let totalPaymentsCount = 0;
+
+        link.payments.forEach(payment => {
+          totalPaymentsCount++;
+          const mintAddress = payment.mint.mintAddress;
+          
+          if (!paymentStats[mintAddress]) {
+            paymentStats[mintAddress] = {
+              token: {
+                id: payment.mint.id,
+                mintAddress: payment.mint.mintAddress,
+                name: payment.mint.name,
+                symbol: payment.mint.symbol,
+                decimals: payment.mint.decimals,
+                imageUrl: payment.mint.imageUrl,
+                description: payment.mint.description,
+                priceUsd: payment.mint.priceUsd
+              },
+              amount: BigInt(0),
+              count: 0
+            };
+          }
+          
+          paymentStats[mintAddress].amount += BigInt(payment.amount);
+          paymentStats[mintAddress].count++;
+        });
+
+        // Convert to array and format amounts
+        const mergedPaymentStats = Object.values(paymentStats).map(stat => ({
+          token: stat.token,
+          amount: stat.amount.toString(),
+          // Convert to human readable amount
+          humanReadableAmount: Number(stat.amount) / (10 ** stat.token.decimals),
+          count: stat.count
+        }));
+
+        console.log('link.viewCount', link.viewCount);
         return {
           ...link,
           linkPreview,
@@ -184,7 +228,14 @@ export const linkRoutes = (app, _, done) => {
           // Add chain amount if fixed amount type
           chainAmount: link.amount && link.mint ? 
             BigInt(link.amount * (10 ** link.mint.decimals)).toString() : 
-            null
+            null,
+          stats: {
+            viewCount: link.viewCount,
+            totalPayments: totalPaymentsCount,
+            paymentStats: mergedPaymentStats
+          },
+          // Remove payments from the response to keep it clean
+          payments: undefined
         };
       });
 
