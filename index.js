@@ -75,7 +75,7 @@ if (process.env.WORKERS_ENABLED === "true") {
   fastify.register(suiStealthWorkers)
   fastify.register(suiTokenWorker)
 }
-fastify.register(suiStealthWorkers)
+// fastify.register(suiStealthWorkers)
 // fastify.register(stealthWorkers)
 // fastify.register(suiStealthWorkers)
 
