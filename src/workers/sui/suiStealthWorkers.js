@@ -101,6 +101,12 @@ export const suiStealthWorkers = (app, _, done) => {
 
         if (existingPayment) continue;
 
+        // Check if transaction has events
+        if (!tx.events || tx.events.length === 0) {
+          // console.log(`Transaction ${tx.digest} has no events, skipping`);
+          continue;
+        }
+
         const eventType = tx.events[0].type;
         // console.log('eventType: ', eventType)
 
